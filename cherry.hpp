@@ -4,157 +4,132 @@
 #include <limits>
 #include <tuple>
 #include <algorithm>
+#include <cstdint>
 
 
 namespace cherry {
     template<typename T>
-    constexpr inline auto ClampTo(int64_t value) -> T {
-        constexpr auto min = static_cast<int64_t>(std::numeric_limits<T>::min());
-        constexpr auto max = static_cast<int64_t>(std::numeric_limits<T>::max());
+    inline auto ClampTo(int64_t value) -> T {
+        constexpr auto min = static_cast<decltype(value)>(std::numeric_limits<T>::min());
+        constexpr auto max = static_cast<decltype(value)>(std::numeric_limits<T>::max());
 
         return static_cast<T>(std::clamp(value, min, max));
     }
 
 
-    struct ChannelLayout {
-        uint32_t OffsetRed{ 0 };
-        uint32_t OffsetGreen{ 1 };
-        uint32_t OffsetBlue{ 2 };
-        uint32_t OffsetAlpha{ 3 };
-    };
+    template<typename T>
+    inline auto IsWithinRange(int64_t value) -> bool {
+        constexpr auto min = static_cast<decltype(value)>(std::numeric_limits<T>::min());
+        constexpr auto max = static_cast<decltype(value)>(std::numeric_limits<T>::max());
 
-    constexpr auto LayoutRGBA = ChannelLayout{
-            .OffsetRed = 0,
-            .OffsetGreen = 1,
-            .OffsetBlue = 2,
-            .OffsetAlpha = 3
-    };
+        return value >= min and value <= max;
+    }
 
 
-    struct Color {
-        uint32_t Blue{ 0 };
-        uint32_t Green{ 0 };
-        uint32_t Red{ 0 };
-        uint32_t Alpha{ 255 };
+    constexpr auto SHIFT_RED = 0;
+    constexpr auto SHIFT_GREEN = 8;
+    constexpr auto SHIFT_BLUE = 16;
+    constexpr auto SHIFT_ALPHA = 24;
 
 
-        inline auto Clamp() -> Color & {
-            Blue = ClampTo<uint8_t>(Blue);
-            Green = ClampTo<uint8_t>(Green);
-            Red = ClampTo<uint8_t>(Red);
-            Alpha = ClampTo<uint8_t>(Alpha);
-
-            return *this;
-        }
-
-
-        /**
-         * Blend two colors using alpha compositing.
-         * This operates on straight alpha colors.
-         * <p>
-         * alpha_result = alpha_src + alpha_dst * (1.0 - alpha_src)
-         * </p>
-         * <p>
-         * RGB_result = 1.0 / alpha_result * (RGB_src * alpha_src + RGB_dst * alpha_dst * (1.0 - alpha_src))
-         * </p>
-         */
-        [[nodiscard]] inline auto BlendOver(Color dst) const -> Color {
-            auto result = Color{};
-
-            result.Alpha = Alpha + dst.Alpha * (255 - Alpha) / 255;
-
-            result.Blue = (Blue * Alpha + dst.Blue * dst.Alpha * (255 - Alpha) / 255) / result.Alpha;
-            result.Green = (Green * Alpha + dst.Green * dst.Alpha * (255 - Alpha) / 255) / result.Alpha;
-            result.Red = (Red * Alpha + dst.Red * dst.Alpha * (255 - Alpha) / 255) / result.Alpha;
-
-            return result.Clamp();
-        }
-    };
+    [[nodiscard]] constexpr inline auto CombineRGBA(
+            uint32_t red,
+            uint32_t green,
+            uint32_t blue,
+            uint32_t alpha) -> uint32_t {
+        return
+                ((red & 0xFF) << SHIFT_RED)
+                | ((green & 0xFF) << SHIFT_GREEN)
+                | ((blue & 0xFF) << SHIFT_BLUE)
+                | ((alpha & 0xFF) << SHIFT_ALPHA);
+    }
 
 
-    struct Vec2 {
-        int64_t X{ 0 };
-        int64_t Y{ 0 };
-    };
+    [[nodiscard]] constexpr inline auto DeconstructRGBA(
+            uint32_t pixel) -> std::tuple<uint8_t, uint8_t, uint8_t, uint8_t> {
+        return {
+                (pixel >> SHIFT_RED) & 0xFF,
+                (pixel >> SHIFT_GREEN) & 0xFF,
+                (pixel >> SHIFT_BLUE) & 0xFF,
+                (pixel >> SHIFT_ALPHA) & 0xFF,
+        };
+    }
 
 
-    struct Box {
-        int64_t Left{ 0 };
-        int64_t Top{ 0 };
-        int64_t Right{ 0 };
-        int64_t Bottom{ 0 };
+    [[nodiscard]] inline auto BlendOver(
+            uint32_t src,
+            uint32_t dst) -> uint32_t {
+        const auto[src_r, src_g, src_b, src_a] = DeconstructRGBA(src);
+        const auto[dst_r, dst_g, dst_b, dst_a] = DeconstructRGBA(dst);
+
+        const auto a = src_a + dst_a * (255 - src_a) / 255;
+        const auto r = (src_r * src_a + dst_r * dst_a * (255 - src_a) / 255) / a;
+        const auto g = (src_g * src_a + dst_g * dst_a * (255 - src_a) / 255) / a;
+        const auto b = (src_b * src_a + dst_b * dst_a * (255 - src_a) / 255) / a;
+
+        return CombineRGBA(r, g, b, a);
+    }
 
 
-        inline auto SortBounds() -> Box & {
-            std::tie(Left, Right) = std::tuple(std::min(Left, Right), std::max(Left, Right));
-            std::tie(Top, Bottom) = std::tuple(std::min(Top, Bottom), std::max(Top, Bottom));
-
-            return *this;
-        }
-
-
-        [[nodiscard]] inline auto Width() const -> int64_t {
-            return Right - Left;
-        }
-
-
-        [[nodiscard]] inline auto Height() const -> int64_t {
-            return Bottom - Top;
-        }
-    };
-
-
-    enum PixelBlendMode {
+    enum class PixelBlendMode {
         OVERWRITE,
         ALPHA_COMPOSITING
     };
 
 
     class Canvas {
-        static constexpr auto CHANNELS = 4;
+        PixelBlendMode blend_mode{ PixelBlendMode::OVERWRITE };
 
+        void (* BlendPixelFn)(
+                Canvas &,
+                int64_t,
+                int64_t,
+                uint32_t){ nullptr };
 
     public:
-        [[maybe_unused]] Canvas(
-                uint8_t * data,
+        uint32_t * const Data{ nullptr };
+        uint8_t * const DataUint8{ nullptr };
+        const uint32_t Width{ 0u };
+        const uint32_t Height{ 0u };
+        const uint32_t Stride{ 0u };
+        const bool Empty{ false };
+
+
+        Canvas(
+                uint32_t * data,
                 int64_t width,
                 int64_t height,
                 int64_t stride,
                 PixelBlendMode mode = PixelBlendMode::OVERWRITE)
                 :
-                blend_mode(mode),
-                BlendPixelFn(nullptr),
-                data_bytes_mutable_view(data),
-                width_pixels(width),
-                height_pixels(height),
-                stride_bytes(stride * CHANNELS),
-                stride_pixels(stride) {
-            if (width < 0) {
-                throw std::out_of_range("Canvas width must be positive");
+                Data(data),
+                DataUint8(reinterpret_cast<uint8_t *>(data)),
+                Width(width),
+                Height(height),
+                Stride(stride),
+                Empty(not width or not height) {
+            if (not IsWithinRange<decltype(Width)>(width)) {
+                throw std::out_of_range("Invalid height: " + std::to_string(width));
             }
-
-            if (height < 0) {
-                throw std::out_of_range("Canvas height must be positive");
+            if (not IsWithinRange<decltype(Height)>(height)) {
+                throw std::out_of_range("Invalid height: " + std::to_string(height));
             }
-
-            if (stride < 0) {
-                throw std::out_of_range("Canvas stride must be positive");
+            if (not IsWithinRange<decltype(Stride)>(stride)) {
+                throw std::out_of_range("Invalid stride: " + std::to_string(stride));
             }
 
             SetBlendMode(mode);
         }
 
 
-        [[nodiscard]] inline auto Data() const -> uint8_t const * {
-            return data_bytes_mutable_view;
-        }
-
-
-        inline auto SetChannelLayout(ChannelLayout new_layout) -> Canvas & {
-            layout = new_layout;
-
-            return *this;
-        }
+        Canvas(
+                uint8_t * data,
+                int64_t width,
+                int64_t height,
+                int64_t stride,
+                PixelBlendMode mode = PixelBlendMode::OVERWRITE)
+                :
+                Canvas(reinterpret_cast<uint32_t *>(data), width, height, stride, mode) {}
 
 
         [[nodiscard]] inline auto BlendMode() const -> PixelBlendMode {
@@ -166,69 +141,15 @@ namespace cherry {
             blend_mode = mode;
 
             switch (mode) {
-                case OVERWRITE:
+                case PixelBlendMode::OVERWRITE:
                     BlendPixelFn = BlendOverwrite;
                     break;
-                case ALPHA_COMPOSITING:
+                case PixelBlendMode::ALPHA_COMPOSITING:
                     BlendPixelFn = BlendAlpha;
                     break;
             }
 
             return *this;
-        }
-
-
-        [[nodiscard]] inline auto Width() const -> uint32_t {
-            return width_pixels;
-        }
-
-
-        [[nodiscard]] inline auto Height() const -> uint32_t {
-            return height_pixels;
-        }
-
-
-        inline auto SubCanvas(Box box) -> Canvas {
-            box.SortBounds();
-
-            CheckBounds(box.Left, box.Top);
-            CheckBounds(box.Right - 1, box.Bottom - 1);
-
-            return Canvas{
-                    data_bytes_mutable_view + stride_bytes * box.Top + CHANNELS * box.Left,
-                    ClampTo<uint32_t>(box.Width()),
-                    ClampTo<uint32_t>(box.Height()),
-                    ClampTo<uint32_t>(stride_pixels),
-                    blend_mode
-            }
-#ifdef CHERRY_NAMED_CANVAS
-                .SetName(
-                        name + "$(Left="
-                        + std::to_string(box.Left)
-                        + ", Top=" + std::to_string(box.Top)
-                        + ", Right=" + std::to_string(box.Right)
-                        + ", Bottom=" + std::to_string(box.Bottom) + ")"
-                )
-#endif // CHERRY_NAMED_CANVAS
-                    ;
-        }
-
-
-        inline auto BlendPixel(
-                Vec2 point,
-                Color color) -> Canvas & {
-            CheckBounds(point.X, point.Y);
-
-            BlendPixelFn(*this, point.X, point.Y, color);
-
-            return *this;
-        }
-
-
-        [[nodiscard]] inline auto Pixel(Vec2 point) const -> Color {
-            const auto[x, y] = point;
-
-            return GetPixel(x, y);
         }
 
 
@@ -258,10 +179,71 @@ namespace cherry {
         }
 
 
-        inline auto Fill(Color color) -> Canvas & {
-            for (auto y = 0; y < Height(); y += 1) {
-                for (auto x = 0; x < Width(); x += 1) {
-                    BlendPixel({ x, y }, color);
+        inline auto SubCanvas(
+                int64_t left,
+                int64_t top,
+                int64_t right,
+                int64_t bottom) -> Canvas {
+            std::tie(left, right) = std::tuple(std::min(left, right), std::max(left, right));
+            std::tie(top, bottom) = std::tuple(std::min(top, bottom), std::max(top, bottom));
+
+            CheckBounds(left, top);
+            CheckBounds(right - 1, bottom - 1);
+
+            return Canvas{
+                    Data + Stride * top + left,
+                    right - left,
+                    bottom - top,
+                    Stride,
+                    blend_mode
+            }
+#ifdef CHERRY_NAMED_CANVAS
+                .SetName(
+                        name + "$(Left="
+                        + std::to_string(box.Left)
+                        + ", Top=" + std::to_string(box.Top)
+                        + ", Right=" + std::to_string(box.Right)
+                        + ", Bottom=" + std::to_string(box.Bottom) + ")"
+                )
+#endif // CHERRY_NAMED_CANVAS
+                    ;
+        }
+
+
+        inline auto BlendPixel(
+                int64_t x,
+                int64_t y,
+                uint32_t pixel) -> Canvas & {
+            CheckBounds(x, y);
+
+            BlendPixelFn(*this, x, y, pixel);
+
+            return *this;
+        }
+
+
+        [[nodiscard]] inline auto Pixel(
+                int64_t x,
+                int64_t y) const -> uint32_t {
+            CheckBounds(x, y);
+
+            return Data[Stride * y + x];
+        }
+
+
+        [[nodiscard]] inline auto Pixel(
+                int64_t x,
+                int64_t y) -> uint32_t & {
+            CheckBounds(x, y);
+
+            return Data[Stride * y + x];
+        }
+
+
+        inline auto Fill(uint32_t color) -> Canvas & {
+            for (auto y = 0; y < Height; y += 1) {
+                for (auto x = 0; x < Width; x += 1) {
+                    BlendPixel(x, y, color);
                 }
             }
 
@@ -270,21 +252,23 @@ namespace cherry {
 
 
         inline auto FillRectangle(
-                Box box,
-                Color color) -> Canvas & {
-            SubCanvas(box).Fill(color);
+                int64_t left,
+                int64_t top,
+                int64_t right,
+                int64_t bottom,
+                uint32_t color) -> Canvas & {
+            SubCanvas(left, top, right, bottom).Fill(color);
 
             return *this;
         }
 
 
         inline auto Line(
-                Vec2 p0,
-                Vec2 p1,
-                Color color) -> Canvas & {
-            const auto[x0, y0] = p0;
-            const auto[x1, y1] = p1;
-
+                int64_t x0,
+                int64_t y0,
+                int64_t x1,
+                int64_t y1,
+                uint32_t color) -> Canvas & {
             if (std::abs(y1 - y0) < std::abs(x1 - x0)) {
                 if (x0 > x1) {
                     LineLow(x1, y1, x0, y0, color);
@@ -307,28 +291,36 @@ namespace cherry {
         }
 
 
-        inline auto CopyInto(
+        inline auto Blend(
                 const Canvas & src,
-                Box box) -> Canvas & {
-            auto target = SubCanvas(box);
+                int64_t left,
+                int64_t top,
+                int64_t right,
+                int64_t bottom) -> Canvas & {
+            if (src.Empty) {
+                return *this;
+            }
 
-            const auto dx = (box.Width() > 0) ? 1 : -1;
-            const auto dy = (box.Height() > 0) ? 1 : -1;
+            auto target = SubCanvas(left, top, right, bottom);
+            if (target.Empty) {
+                return *this;
+            }
 
-            for (auto y = 0; y < target.Height(); y += 1) {
-                for (auto x = 0; x < target.Width(); x += 1) {
-                    auto src_x = x * src.Width() / target.Width();
-                    if (dx < 0) {
-                        src_x = src.Width() - src_x - 1;
+            const auto mirrored_x = left > right;
+            const auto mirrored_y = top > bottom;
+
+            for (auto y = 0; y < target.Height; y += 1) {
+                for (auto x = 0; x < target.Width; x += 1) {
+                    auto src_x = x * src.Width / target.Width;
+                    if (mirrored_x) {
+                        src_x = src.Width - 1 - src_x;
+                    }
+                    auto src_y = y * src.Height / target.Height;
+                    if (mirrored_y) {
+                        src_y = src.Height - 1 - src_y;
                     }
 
-                    auto src_y = y * src.Height() / target.Height();
-                    if (dy < 0) {
-                        src_y = src.Height() - src_y - 1;
-                    }
-
-
-                    target.BlendPixel({ x, y }, src.Pixel({ src_x, src_y }));
+                    target.BlendPixel(x, y, src.Pixel(src_x, src_y));
                 }
             }
 
@@ -351,7 +343,7 @@ namespace cherry {
                 int64_t y0,
                 int64_t x1,
                 int64_t y1,
-                Color color) -> void {
+                uint32_t color) -> void {
             const auto dx = x1 - x0;
             const auto[dy, yi] = ((y1 - y0) >= 0) ? std::tuple(y1 - y0, 1) : std::tuple(y0 - y1, -1);
 
@@ -359,7 +351,7 @@ namespace cherry {
             auto y = y0;
 
             for (auto x = x0; x <= x1; x += 1) {
-                BlendPixel({ x, y }, color);
+                BlendPixel(x, y, color);
 
                 if (D > 0) {
                     y += yi;
@@ -377,7 +369,7 @@ namespace cherry {
                 int64_t y0,
                 int64_t x1,
                 int64_t y1,
-                Color color) -> void {
+                uint32_t color) -> void {
             const auto[dx, xi] = ((x1 - x0) >= 0) ? std::tuple(x1 - x0, 1) : std::tuple(x0 - x1, -1);
             const auto dy = y1 - y0;
 
@@ -385,7 +377,7 @@ namespace cherry {
             auto x = x0;
 
             for (auto y = y0; y <= y1; y += 1) {
-                BlendPixel({ x, y }, color);
+                BlendPixel(x, y, color);
 
                 if (D > 0) {
                     x += xi;
@@ -401,7 +393,7 @@ namespace cherry {
         [[nodiscard]] inline auto WithinBounds(
                 int64_t x,
                 int64_t y) const -> bool {
-            return x >= 0 and y >= 0 and x < width_pixels and y < height_pixels;
+            return x >= 0 and y >= 0 and x < Width and y < Height;
         }
 
 
@@ -418,41 +410,12 @@ namespace cherry {
                     "Canvas \"" + name + "\": coordinates ("
 #else // CHERRY_NAMED_CANVAS
                     "Coordinates ("
-                    #endif // CHERRY_NAMED_CANVAS
+#endif // CHERRY_NAMED_CANVAS
                     + std::to_string(x) + ", " + std::to_string(y) +
                     ") are out of bounds for image size ("
-                    + std::to_string(width_pixels) + ", " + std::to_string(height_pixels) + ")";
+                    + std::to_string(Width) + ", " + std::to_string(Height) + ")";
             throw std::out_of_range(message);
 #endif // CHERRY_CHECK_BOUNDS
-        }
-
-
-        inline auto SetPixel(
-                int64_t x,
-                int64_t y,
-                Color color) -> Canvas & {
-            CheckBounds(x, y);
-
-            data_bytes_mutable_view[stride_bytes * y + CHANNELS * x + layout.OffsetBlue] = color.Blue;
-            data_bytes_mutable_view[stride_bytes * y + CHANNELS * x + layout.OffsetGreen] = color.Green;
-            data_bytes_mutable_view[stride_bytes * y + CHANNELS * x + layout.OffsetRed] = color.Red;
-            data_bytes_mutable_view[stride_bytes * y + CHANNELS * x + layout.OffsetAlpha] = color.Alpha;
-
-            return *this;
-        }
-
-
-        [[nodiscard]] inline auto GetPixel(
-                int64_t x,
-                int64_t y) const -> Color {
-            CheckBounds(x, y);
-
-            return {
-                    .Blue = data_bytes_mutable_view[stride_bytes * y + CHANNELS * x + layout.OffsetBlue],
-                    .Green = data_bytes_mutable_view[stride_bytes * y + CHANNELS * x + layout.OffsetGreen],
-                    .Red = data_bytes_mutable_view[stride_bytes * y + CHANNELS * x + layout.OffsetRed],
-                    .Alpha = data_bytes_mutable_view[stride_bytes * y + CHANNELS * x + layout.OffsetAlpha],
-            };
         }
 
 
@@ -460,8 +423,8 @@ namespace cherry {
                 Canvas & canvas,
                 int64_t x,
                 int64_t y,
-                Color color) -> void {
-            canvas.SetPixel(x, y, color);
+                uint32_t color) -> void {
+            canvas.Pixel(x, y) = color;
         }
 
 
@@ -469,26 +432,10 @@ namespace cherry {
                 Canvas & canvas,
                 int64_t x,
                 int64_t y,
-                Color color) -> void {
-            const auto new_color = color.BlendOver(canvas.Pixel({ x, y }));
-            canvas.SetPixel(x, y, new_color);
+                uint32_t color) -> void {
+            canvas.Pixel(x, y) = BlendOver(color, canvas.Pixel(x, y));
         }
 
-
-        PixelBlendMode blend_mode;
-        std::function<void(
-                Canvas &,
-                int64_t,
-                int64_t,
-                Color)> BlendPixelFn;
-
-        ChannelLayout layout{ LayoutRGBA };
-
-        uint8_t * const data_bytes_mutable_view{ nullptr };
-        const int64_t width_pixels{ 0 };
-        const int64_t height_pixels{ 0 };
-        const int64_t stride_bytes{ 0 };
-        const int64_t stride_pixels{ 0 };
 
 #ifdef CHERRY_NAMED_CANVAS
         std::string name;
