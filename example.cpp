@@ -51,8 +51,8 @@ auto FunkyTree(
 
 
 auto Gradient(cherry::Canvas & canvas) -> cherry::Canvas & {
-    for (auto y = 0; y < canvas.Height; y += 1) {
-        for (auto x = 0; x < canvas.Width; x += 1) {
+    for (auto y = decltype(canvas.Height){ 0 }; y < canvas.Height; y += 1) {
+        for (auto x = decltype(canvas.Width){ 0 }; x < canvas.Width; x += 1) {
             const auto t = static_cast<uint8_t>((255.0 * (x + y)) / (canvas.Width + canvas.Height));
             canvas.BlendPixel(x, y, cherry::CombineRGBA(t, 128 - t / 2, 192, 192));
         }
@@ -66,8 +66,8 @@ auto CheckeredBackground(cherry::Canvas & canvas) -> cherry::Canvas & {
     const auto white = cherry::CombineRGBA(255, 255, 255, 255);
     const auto gray = cherry::CombineRGBA(192, 192, 192, 255);
 
-    for (auto y = 0; y < canvas.Height; y += 1) {
-        for (auto x = 0; x < canvas.Width; x += 1) {
+    for (auto y = decltype(canvas.Height){ 0 }; y < canvas.Height; y += 1) {
+        for (auto x = decltype(canvas.Width){ 0 }; x < canvas.Width; x += 1) {
             canvas.BlendPixel(x, y, (x / 25 + y / 25) % 2 ? white : gray);
         }
     }
@@ -246,7 +246,7 @@ auto SquareBenchmark(std::chrono::seconds benchmark_duration) -> void {
 }
 
 
-auto Main(const std::string & file_name) -> void {
+auto Main([[maybe_unused]] const std::string & file_name) -> void {
     TreeBenchmark(std::chrono::seconds{ 15 });
 }
 

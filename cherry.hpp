@@ -275,8 +275,8 @@ namespace cherry {
 
 
         inline auto Fill(uint32_t color) -> Canvas & {
-            for (auto y = 0; y < Height; y += 1) {
-                for (auto x = 0; x < Width; x += 1) {
+            for (auto y = decltype(Height){ 0 }; y < Height; y += 1) {
+                for (auto x = decltype(Width){ 0 }; x < Width; x += 1) {
                     BlendPixel(x, y, color);
                 }
             }
@@ -344,13 +344,13 @@ namespace cherry {
                 return *this;
             }
 
-            for (auto y = 0; y < target.Height; y += 1) {
+            for (auto y = decltype(target.Height){ 0 }; y < target.Height; y += 1) {
                 auto src_y = y * src2.Height / target.Height;
                 if (mirrored_y) {
                     src_y = src2.Height - 1 - src_y;
                 }
 
-                for (auto x = 0; x < target.Width; x += 1) {
+                for (auto x = decltype(target.Width){ 0 }; x < target.Width; x += 1) {
                     auto src_x = x * src2.Width / target.Width;
                     if (mirrored_x) {
                         src_x = src2.Width - 1 - src_x;
@@ -373,10 +373,12 @@ namespace cherry {
         }
 
 
+#ifdef CHERRY_CHECK_BOUNDS
+
+
         inline auto CheckBounds(
                 int64_t x,
                 int64_t y) const -> void {
-#ifdef CHERRY_CHECK_BOUNDS
             if (IsWithinBounds(x, y)) {
                 return;
             }
@@ -387,8 +389,18 @@ namespace cherry {
                     ") are out of bounds for image size ("
                     + std::to_string(Width) + ", " + std::to_string(Height) + ")";
             throw std::out_of_range(message);
-#endif // CHERRY_CHECK_BOUNDS
         }
+
+
+#else
+
+
+        inline auto CheckBounds(
+                int64_t,
+                int64_t) const -> void {}
+
+
+#endif // CHERRY_CHECK_BOUNDS
 
 
         static inline auto BlendOverwrite(
@@ -527,7 +539,7 @@ namespace cherry {
                 return canvas;
             }
 
-            for (auto i = 0; i < vertices.size(); i += 1) {
+            for (auto i = decltype(vertices.size()){ 0 }; i < vertices.size(); i += 1) {
                 const auto[x0, y0] = vertices[i % vertices.size()];
                 const auto[x1, y1] = vertices[(i + 1) % vertices.size()];
 
