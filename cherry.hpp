@@ -1,6 +1,8 @@
 #pragma once
 
+#ifdef CHERRY_CHECK_BOUNDS
 #include <stdexcept>
+#endif
 #include <limits>
 #include <tuple>
 #include <algorithm>
@@ -8,16 +10,33 @@
 
 
 namespace cherry {
+#ifdef CHERRY_CLAMP
     template<typename T>
+    [[nodiscard]]
     inline auto ClampTo(int64_t value) -> T {
         constexpr auto min = static_cast<decltype(value)>(std::numeric_limits<T>::min());
         constexpr auto max = static_cast<decltype(value)>(std::numeric_limits<T>::max());
 
         return static_cast<T>(std::clamp(value, min, max));
     }
+#endif // CHERRY_CLAMP
+
+
+#ifdef CHERRY_CLAMP_LINE
+    inline auto ClampLine(
+            int64_t x0,
+            int64_t y0,
+            int64_t x1,
+            int64_t y1,
+            int64_t width,
+            int64_t height) -> std::tuple<decltype(x0), decltype(y0), decltype(x1), decltype(y1)> {
+
+    }
+#endif
 
 
     template<typename T>
+    [[nodiscard]]
     inline auto IsWithinRange(int64_t value) -> bool {
         constexpr auto min = static_cast<decltype(value)>(std::numeric_limits<T>::min());
         constexpr auto max = static_cast<decltype(value)>(std::numeric_limits<T>::max());
@@ -26,17 +45,39 @@ namespace cherry {
     }
 
 
-    constexpr auto SHIFT_RED = 0;
-    constexpr auto SHIFT_GREEN = 8;
-    constexpr auto SHIFT_BLUE = 16;
-    constexpr auto SHIFT_ALPHA = 24;
+    [[nodiscard]]
+    inline auto Sort(
+            int64_t x0,
+            int64_t y0,
+            int64_t x1,
+            int64_t y1) -> std::tuple<decltype(x0), decltype(y0), decltype(x1), decltype(y1)> {
+        return { std::min(x0, x1), std::min(y0, y1), std::max(x0, x1), std::max(y0, y1) };
+    }
 
 
-    [[nodiscard]] constexpr inline auto CombineRGBA(
+    constexpr auto INDEX_RED = 0u;
+    constexpr auto INDEX_GREEN = 1u;
+    constexpr auto INDEX_BLUE = 2u;
+    constexpr auto INDEX_ALPHA = 3u;
+
+
+    constexpr auto SHIFT_RED = 8u * INDEX_RED;
+    constexpr auto SHIFT_GREEN = 8u * INDEX_GREEN;
+    constexpr auto SHIFT_BLUE = 8u * INDEX_BLUE;
+    constexpr auto SHIFT_ALPHA = 8u * INDEX_ALPHA;
+
+
+    constexpr auto MASK_RED_BLUE = (0xFF << SHIFT_RED) | (0xFF << SHIFT_BLUE);
+    constexpr auto MASK_GREEN = (0xFF << SHIFT_GREEN);
+    constexpr auto MASK_ALPHA = (0xFF << SHIFT_ALPHA);
+
+
+    [[nodiscard]]
+    constexpr inline auto CombineRGBA(
             uint32_t red,
             uint32_t green,
             uint32_t blue,
-            uint32_t alpha) -> uint32_t {
+            uint32_t alpha = 0xFF) -> uint32_t {
         return
                 ((red & 0xFF) << SHIFT_RED)
                 | ((green & 0xFF) << SHIFT_GREEN)
@@ -45,7 +86,8 @@ namespace cherry {
     }
 
 
-    [[nodiscard]] constexpr inline auto DeconstructRGBA(
+    [[nodiscard]]
+    constexpr inline auto DeconstructRGBA(
             uint32_t pixel) -> std::tuple<uint8_t, uint8_t, uint8_t, uint8_t> {
         return {
                 (pixel >> SHIFT_RED) & 0xFF,
@@ -56,24 +98,43 @@ namespace cherry {
     }
 
 
-    [[nodiscard]] inline auto BlendOver(
-            uint32_t src,
-            uint32_t dst) -> uint32_t {
-        const auto[src_r, src_g, src_b, src_a] = DeconstructRGBA(src);
-        const auto[dst_r, dst_g, dst_b, dst_a] = DeconstructRGBA(dst);
+    [[nodiscard]]
+    inline auto AlphaBlend(
+            uint32_t foreground,
+            uint32_t background) -> uint32_t {
+        const auto[fg_r, fg_g, fg_b, fg_a] = DeconstructRGBA(foreground);
+        const auto[bg_r, bg_g, bg_b, bg_a] = DeconstructRGBA(background);
 
-        const auto a = src_a + dst_a * (255 - src_a) / 255;
-        const auto r = (src_r * src_a + dst_r * dst_a * (255 - src_a) / 255) / a;
-        const auto g = (src_g * src_a + dst_g * dst_a * (255 - src_a) / 255) / a;
-        const auto b = (src_b * src_a + dst_b * dst_a * (255 - src_a) / 255) / a;
+        const auto a = fg_a + bg_a * (255 - fg_a) / 255;
+        const auto r = (fg_r * fg_a + bg_r * bg_a * (255 - fg_a) / 255) / a;
+        const auto g = (fg_g * fg_a + bg_g * bg_a * (255 - fg_a) / 255) / a;
+        const auto b = (fg_b * fg_a + bg_b * bg_a * (255 - fg_a) / 255) / a;
 
         return CombineRGBA(r, g, b, a);
     }
 
 
+    [[nodiscard]]
+    inline auto FastAlphaBlend(
+            uint64_t foreground,
+            uint64_t background) -> uint32_t {
+        const auto fg_a = ((foreground & MASK_ALPHA) >> SHIFT_ALPHA);
+        const auto alpha = fg_a + 1;
+        const auto inv_alpha = 256 - fg_a;
+
+        const auto rb =
+                (alpha * (foreground & MASK_RED_BLUE) + inv_alpha * (background & MASK_RED_BLUE)) >> 8;
+        const auto g =
+                (alpha * (foreground & MASK_GREEN) + inv_alpha * (background & MASK_GREEN)) >> 8;
+
+        return (rb & MASK_RED_BLUE) | (g & MASK_GREEN) | (~0 & MASK_ALPHA);
+    }
+
+
     enum class PixelBlendMode {
         OVERWRITE,
-        ALPHA_COMPOSITING
+        ALPHA_COMPOSITING,
+        FAST_ALPHA_COMPOSITING
     };
 
 
@@ -108,6 +169,7 @@ namespace cherry {
                 Height(height),
                 Stride(stride),
                 Empty(not width or not height) {
+#ifdef CHERRY_CHECK_BOUNDS
             if (not IsWithinRange<decltype(Width)>(width)) {
                 throw std::out_of_range("Invalid height: " + std::to_string(width));
             }
@@ -117,22 +179,23 @@ namespace cherry {
             if (not IsWithinRange<decltype(Stride)>(stride)) {
                 throw std::out_of_range("Invalid stride: " + std::to_string(stride));
             }
+#endif
 
             SetBlendMode(mode);
         }
 
 
         Canvas(
-                uint8_t * data,
+                uint32_t * data,
                 int64_t width,
-                int64_t height,
-                int64_t stride,
-                PixelBlendMode mode = PixelBlendMode::OVERWRITE)
+                int64_t height)
                 :
-                Canvas(reinterpret_cast<uint32_t *>(data), width, height, stride, mode) {}
+                Canvas(data, width, height, width) {}
 
 
-        [[nodiscard]] inline auto BlendMode() const -> PixelBlendMode {
+        [[nodiscard]]
+        [[maybe_unused]]
+        inline auto BlendMode() const -> PixelBlendMode {
             return blend_mode;
         }
 
@@ -147,66 +210,33 @@ namespace cherry {
                 case PixelBlendMode::ALPHA_COMPOSITING:
                     BlendPixelFn = BlendAlpha;
                     break;
+                case PixelBlendMode::FAST_ALPHA_COMPOSITING:
+                    BlendPixelFn = BlendFastAlpha;
+                    break;
             }
 
             return *this;
         }
 
 
-        class BlendModeGuard {
-            Canvas & canvas;
-            PixelBlendMode previous_mode;
-
-        public:
-            BlendModeGuard(
-                    Canvas & canvas,
-                    PixelBlendMode new_mode)
-                    :
-                    canvas(canvas),
-                    previous_mode(canvas.BlendMode()) {
-                canvas.SetBlendMode(new_mode);
-            }
-
-
-            ~BlendModeGuard() {
-                canvas.SetBlendMode(previous_mode);
-            }
-        };
-
-
-        [[nodiscard]] inline auto WithBlendMode(PixelBlendMode mode) -> BlendModeGuard {
-            return { *this, mode };
-        }
-
-
+        [[nodiscard]]
         inline auto SubCanvas(
-                int64_t left,
-                int64_t top,
-                int64_t right,
-                int64_t bottom) -> Canvas {
-            std::tie(left, right) = std::tuple(std::min(left, right), std::max(left, right));
-            std::tie(top, bottom) = std::tuple(std::min(top, bottom), std::max(top, bottom));
+                int64_t x0,
+                int64_t y0,
+                int64_t x1,
+                int64_t y1) const -> Canvas {
+            std::tie(x0, y0, x1, y1) = Sort(x0, y0, x1, y1);
 
-            CheckBounds(left, top);
-            CheckBounds(right - 1, bottom - 1);
+            CheckBounds(x0, y0);
+            CheckBounds(x1 - 1, y1 - 1);
 
             return Canvas{
-                    Data + Stride * top + left,
-                    right - left,
-                    bottom - top,
+                    Data + Stride * y0 + x0,
+                    x1 - x0,
+                    y1 - y0,
                     Stride,
                     blend_mode
-            }
-#ifdef CHERRY_NAMED_CANVAS
-                .SetName(
-                        name + "$(Left="
-                        + std::to_string(box.Left)
-                        + ", Top=" + std::to_string(box.Top)
-                        + ", Right=" + std::to_string(box.Right)
-                        + ", Bottom=" + std::to_string(box.Bottom) + ")"
-                )
-#endif // CHERRY_NAMED_CANVAS
-                    ;
+            };
         }
 
 
@@ -222,18 +252,22 @@ namespace cherry {
         }
 
 
-        [[nodiscard]] inline auto Pixel(
+        inline auto OverwritePixel(
                 int64_t x,
-                int64_t y) const -> uint32_t {
+                int64_t y,
+                uint32_t pixel) -> Canvas & {
             CheckBounds(x, y);
 
-            return Data[Stride * y + x];
+            Data[Stride * y + x] = pixel;
+
+            return *this;
         }
 
 
-        [[nodiscard]] inline auto Pixel(
+        [[nodiscard]]
+        inline auto Pixel(
                 int64_t x,
-                int64_t y) -> uint32_t & {
+                int64_t y) const -> uint32_t {
             CheckBounds(x, y);
 
             return Data[Stride * y + x];
@@ -251,47 +285,7 @@ namespace cherry {
         }
 
 
-        inline auto FillRectangle(
-                int64_t left,
-                int64_t top,
-                int64_t right,
-                int64_t bottom,
-                uint32_t color) -> Canvas & {
-            SubCanvas(left, top, right, bottom).Fill(color);
-
-            return *this;
-        }
-
-
-        inline auto Line(
-                int64_t x0,
-                int64_t y0,
-                int64_t x1,
-                int64_t y1,
-                uint32_t color) -> Canvas & {
-            if (std::abs(y1 - y0) < std::abs(x1 - x0)) {
-                if (x0 > x1) {
-                    LineLow(x1, y1, x0, y0, color);
-                }
-                else {
-                    LineLow(x0, y0, x1, y1, color);
-                }
-            }
-            else {
-                if (y0 > y1) {
-                    LineHigh(x1, y1, x0, y0, color);
-                }
-                else {
-                    LineHigh(x0, y0, x1, y1, color);
-                }
-            }
-
-
-            return *this;
-        }
-
-
-        inline auto Blend(
+        inline auto Copy(
                 const Canvas & src,
                 int64_t left,
                 int64_t top,
@@ -301,96 +295,78 @@ namespace cherry {
                 return *this;
             }
 
-            auto target = SubCanvas(left, top, right, bottom);
-            if (target.Empty) {
-                return *this;
-            }
+            const auto target_width = std::abs(left - right);
+            const auto target_height = std::abs(top - bottom);
 
             const auto mirrored_x = left > right;
             const auto mirrored_y = top > bottom;
 
+            auto src_x0 = int64_t{ 0 };
+            auto src_y0 = int64_t{ 0 };
+            auto src_x1 = int64_t{ src.Width };
+            auto src_y1 = int64_t{ src.Height };
+
+            auto target = SubCanvas(
+                    std::clamp<decltype(left)>(left, 0, Width),
+                    std::clamp<decltype(top)>(top, 0, Height),
+                    std::clamp<decltype(right)>(right, 0, Width),
+                    std::clamp<decltype(bottom)>(bottom, 0, Height)
+            );
+
+            std::tie(left, top, right, bottom) = Sort(left, top, right, bottom);
+
+            if (left < 0) {
+                src_x0 = -left * src.Width / target_width;
+            }
+            if (top < 0) {
+                src_y0 = -top * src.Height / target_height;
+            }
+            if (right >= Width) {
+                src_x1 = (Width - left) * src.Width / target_width;
+            }
+            if (bottom >= Height) {
+                src_y1 = (Height - top) * src.Height / target_height;
+            }
+
+            if (mirrored_x) {
+                src_x0 = src.Width - src_x0;
+                src_x1 = src.Width - src_x1;
+            }
+
+            if (mirrored_y) {
+                src_y0 = src.Height - src_y0;
+                src_y1 = src.Height - src_y1;
+            }
+
+            auto src2 = src.SubCanvas(src_x0, src_y0, src_x1, src_y1);
+
+            if (target.Empty) {
+                return *this;
+            }
+
             for (auto y = 0; y < target.Height; y += 1) {
+                auto src_y = y * src2.Height / target.Height;
+                if (mirrored_y) {
+                    src_y = src2.Height - 1 - src_y;
+                }
+
                 for (auto x = 0; x < target.Width; x += 1) {
-                    auto src_x = x * src.Width / target.Width;
+                    auto src_x = x * src2.Width / target.Width;
                     if (mirrored_x) {
-                        src_x = src.Width - 1 - src_x;
-                    }
-                    auto src_y = y * src.Height / target.Height;
-                    if (mirrored_y) {
-                        src_y = src.Height - 1 - src_y;
+                        src_x = src2.Width - 1 - src_x;
                     }
 
-                    target.BlendPixel(x, y, src.Pixel(src_x, src_y));
+                    target.BlendPixel(x, y, src2.Pixel(src_x, src_y));
                 }
             }
 
             return *this;
         }
-
-
-#ifdef CHERRY_NAMED_CANVAS
-        inline auto SetName(const std::string & new_name) -> Canvas & {
-            name = new_name;
-
-            return *this;
-        }
-#endif // CHERRY_NAMED_CANVAS
 
 
     private:
-        inline auto LineLow(
-                int64_t x0,
-                int64_t y0,
-                int64_t x1,
-                int64_t y1,
-                uint32_t color) -> void {
-            const auto dx = x1 - x0;
-            const auto[dy, yi] = ((y1 - y0) >= 0) ? std::tuple(y1 - y0, 1) : std::tuple(y0 - y1, -1);
-
-            auto D = 2 * dy - dx;
-            auto y = y0;
-
-            for (auto x = x0; x <= x1; x += 1) {
-                BlendPixel(x, y, color);
-
-                if (D > 0) {
-                    y += yi;
-                    D += 2 * (dy - dx);
-                }
-                else {
-                    D += 2 * dy;
-                }
-            }
-        }
-
-
-        inline auto LineHigh(
-                int64_t x0,
-                int64_t y0,
-                int64_t x1,
-                int64_t y1,
-                uint32_t color) -> void {
-            const auto[dx, xi] = ((x1 - x0) >= 0) ? std::tuple(x1 - x0, 1) : std::tuple(x0 - x1, -1);
-            const auto dy = y1 - y0;
-
-            auto D = 2 * dx - dy;
-            auto x = x0;
-
-            for (auto y = y0; y <= y1; y += 1) {
-                BlendPixel(x, y, color);
-
-                if (D > 0) {
-                    x += xi;
-                    D += 2 * (dx - dy);
-                }
-                else {
-                    D += 2 * dx;
-                }
-            }
-        }
-
-
-        [[nodiscard]] inline auto WithinBounds(
+        [[nodiscard]]
+        inline auto IsWithinBounds(
                 int64_t x,
                 int64_t y) const -> bool {
             return x >= 0 and y >= 0 and x < Width and y < Height;
@@ -401,16 +377,12 @@ namespace cherry {
                 int64_t x,
                 int64_t y) const -> void {
 #ifdef CHERRY_CHECK_BOUNDS
-            if (WithinBounds(x, y)) {
+            if (IsWithinBounds(x, y)) {
                 return;
             }
 
             const auto message =
-#ifdef CHERRY_NAMED_CANVAS
-                    "Canvas \"" + name + "\": coordinates ("
-#else // CHERRY_NAMED_CANVAS
                     "Coordinates ("
-#endif // CHERRY_NAMED_CANVAS
                     + std::to_string(x) + ", " + std::to_string(y) +
                     ") are out of bounds for image size ("
                     + std::to_string(Width) + ", " + std::to_string(Height) + ")";
@@ -424,7 +396,7 @@ namespace cherry {
                 int64_t x,
                 int64_t y,
                 uint32_t color) -> void {
-            canvas.Pixel(x, y) = color;
+            canvas.OverwritePixel(x, y, color);
         }
 
 
@@ -433,12 +405,136 @@ namespace cherry {
                 int64_t x,
                 int64_t y,
                 uint32_t color) -> void {
-            canvas.Pixel(x, y) = BlendOver(color, canvas.Pixel(x, y));
+            canvas.OverwritePixel(x, y, AlphaBlend(color, canvas.Pixel(x, y)));
         }
 
 
-#ifdef CHERRY_NAMED_CANVAS
-        std::string name;
-#endif // CHERRY_NAMED_CANVAS
+        static inline auto BlendFastAlpha(
+                Canvas & canvas,
+                int64_t x,
+                int64_t y,
+                uint32_t color) -> void {
+            canvas.OverwritePixel(x, y, FastAlphaBlend(color, canvas.Pixel(x, y)));
+        }
     };
+
+
+    namespace drawing {
+        inline auto LineLow(
+                Canvas & canvas,
+                int64_t x0,
+                int64_t y0,
+                int64_t x1,
+                int64_t y1,
+                uint32_t color) -> void {
+            const auto dx = x1 - x0;
+            const auto[dy, yi] = ((y1 - y0) >= 0) ? std::tuple(y1 - y0, 1) : std::tuple(y0 - y1, -1);
+
+            auto D = 2 * dy - dx;
+            auto y = y0;
+
+            for (auto x = x0; x <= x1; x += 1) {
+                canvas.BlendPixel(x, y, color);
+
+                if (D > 0) {
+                    y += yi;
+                    D += 2 * (dy - dx);
+                }
+                else {
+                    D += 2 * dy;
+                }
+            }
+        }
+
+
+        inline auto LineHigh(
+                Canvas & canvas,
+                int64_t x0,
+                int64_t y0,
+                int64_t x1,
+                int64_t y1,
+                uint32_t color) -> void {
+            const auto[dx, xi] = ((x1 - x0) >= 0) ? std::tuple(x1 - x0, 1) : std::tuple(x0 - x1, -1);
+            const auto dy = y1 - y0;
+
+            auto D = 2 * dx - dy;
+            auto x = x0;
+
+            for (auto y = y0; y <= y1; y += 1) {
+                canvas.BlendPixel(x, y, color);
+
+                if (D > 0) {
+                    x += xi;
+                    D += 2 * (dx - dy);
+                }
+                else {
+                    D += 2 * dx;
+                }
+            }
+        }
+
+
+        [[maybe_unused]]
+        inline auto Line(
+                Canvas & canvas,
+                int64_t x0,
+                int64_t y0,
+                int64_t x1,
+                int64_t y1,
+                uint32_t color) -> Canvas & {
+            if (std::abs(y1 - y0) < std::abs(x1 - x0)) {
+                if (x0 > x1) {
+                    LineLow(canvas, x1, y1, x0, y0, color);
+                }
+                else {
+                    LineLow(canvas, x0, y0, x1, y1, color);
+                }
+            }
+            else {
+                if (y0 > y1) {
+                    LineHigh(canvas, x1, y1, x0, y0, color);
+                }
+                else {
+                    LineHigh(canvas, x0, y0, x1, y1, color);
+                }
+            }
+
+
+            return canvas;
+        }
+
+
+        [[maybe_unused]]
+        inline auto FillRectangle(
+                Canvas & canvas,
+                int64_t left,
+                int64_t top,
+                int64_t right,
+                int64_t bottom,
+                uint32_t color) -> Canvas & {
+            canvas.SubCanvas(left, top, right, bottom).Fill(color);
+
+            return canvas;
+        }
+
+
+        [[maybe_unused]]
+        inline auto Shape(
+                Canvas & canvas,
+                const std::vector<std::tuple<int64_t, int64_t>> & vertices,
+                uint32_t color) -> Canvas & {
+            if (vertices.empty()) {
+                return canvas;
+            }
+
+            for (auto i = 0; i < vertices.size(); i += 1) {
+                const auto[x0, y0] = vertices[i % vertices.size()];
+                const auto[x1, y1] = vertices[(i + 1) % vertices.size()];
+
+                Line(canvas, x0, y0, x1, y1, color);
+            }
+
+            return canvas;
+        }
+    }
 }
