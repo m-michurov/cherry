@@ -7,14 +7,14 @@
 #include <tuple>
 #include <algorithm>
 #include <cstdint>
+#include <utility>
 
 
-// TODO use int32_t/int64_t everywhere to avoid unnecessary casts
 namespace cherry {
 #ifdef CHERRY_CLAMP
     template<typename T>
     [[nodiscard]]
-    inline auto ClampTo(int64_t value) -> T {
+    inline auto ClampTo(int value) -> T {
         constexpr auto min = static_cast<decltype(value)>(std::numeric_limits<T>::min());
         constexpr auto max = static_cast<decltype(value)>(std::numeric_limits<T>::max());
 
@@ -25,32 +25,22 @@ namespace cherry {
 
 #ifdef CHERRY_CLAMP_LINE
     inline auto ClampLine(
-            int64_t x0,
-            int64_t y0,
-            int64_t x1,
-            int64_t y1,
-            int64_t width,
-            int64_t height) -> std::tuple<decltype(x0), decltype(y0), decltype(x1), decltype(y1)> {
+            int x0,
+            int y0,
+            int x1,
+            int y1,
+            int width,
+            int height) -> std::tuple<decltype(x0), decltype(y0), decltype(x1), decltype(y1)> {
 
     }
 #endif
 
 
-    template<typename T>
-    [[nodiscard]]
-    inline auto IsWithinRange(int64_t value) -> bool {
-        constexpr auto min = static_cast<decltype(value)>(std::numeric_limits<T>::min());
-        constexpr auto max = static_cast<decltype(value)>(std::numeric_limits<T>::max());
-
-        return value >= min and value <= max;
-    }
-
-
     inline auto SortTopLeft(
-            int64_t & x0,
-            int64_t & y0,
-            int64_t & x1,
-            int64_t & y1) -> void {
+            int & x0,
+            int & y0,
+            int & x1,
+            int & y1) -> void {
         if (x1 < x0) {
             std::swap(x0, x1);
         }
@@ -153,24 +143,24 @@ namespace cherry {
 
         void (* BlendPixelFn)(
                 Canvas &,
-                int64_t,
-                int64_t,
+                int,
+                int,
                 uint32_t){ nullptr };
 
     public:
         uint32_t * const Data{ nullptr };
         uint8_t * const DataUint8{ nullptr };
-        const uint32_t Width{ 0u };
-        const uint32_t Height{ 0u };
-        const uint32_t Stride{ 0u };
+        const int Width{ 0u };
+        const int Height{ 0u };
+        const int Stride{ 0u };
         const bool Empty{ false };
 
 
         Canvas(
                 uint32_t * data,
-                int64_t width,
-                int64_t height,
-                int64_t stride,
+                int width,
+                int height,
+                int stride,
                 PixelBlendMode mode = PixelBlendMode::OVERWRITE)
                 :
                 Data(data),
@@ -180,13 +170,13 @@ namespace cherry {
                 Stride(stride),
                 Empty(not width or not height) {
 #ifdef CHERRY_CHECK_BOUNDS
-            if (not IsWithinRange<decltype(Width)>(width)) {
-                throw std::out_of_range("Invalid height: " + std::to_string(width));
+            if (width < 0) {
+                throw std::out_of_range("Invalid width: " + std::to_string(width));
             }
-            if (not IsWithinRange<decltype(Height)>(height)) {
+            if (height < 0) {
                 throw std::out_of_range("Invalid height: " + std::to_string(height));
             }
-            if (not IsWithinRange<decltype(Stride)>(stride)) {
+            if (stride < 0 or stride < width) {
                 throw std::out_of_range("Invalid stride: " + std::to_string(stride));
             }
 #endif
@@ -197,8 +187,8 @@ namespace cherry {
 
         Canvas(
                 uint32_t * data,
-                int64_t width,
-                int64_t height)
+                int width,
+                int height)
                 :
                 Canvas(data, width, height, width) {}
 
@@ -231,10 +221,10 @@ namespace cherry {
 
         [[nodiscard]]
         inline auto SubCanvas(
-                int64_t x0,
-                int64_t y0,
-                int64_t x1,
-                int64_t y1) const -> Canvas {
+                int x0,
+                int y0,
+                int x1,
+                int y1) const -> Canvas {
             SortTopLeft(x0, y0, x1, y1);
 
             CheckBounds(x0, y0);
@@ -251,8 +241,8 @@ namespace cherry {
 
 
         inline auto BlendPixel(
-                int64_t x,
-                int64_t y,
+                int x,
+                int y,
                 uint32_t pixel) -> Canvas & {
             CheckBounds(x, y);
 
@@ -263,8 +253,8 @@ namespace cherry {
 
 
         inline auto OverwritePixel(
-                int64_t x,
-                int64_t y,
+                int x,
+                int y,
                 uint32_t pixel) -> Canvas & {
             CheckBounds(x, y);
 
@@ -276,8 +266,8 @@ namespace cherry {
 
         [[nodiscard]]
         inline auto Pixel(
-                int64_t x,
-                int64_t y) const -> uint32_t {
+                int x,
+                int y) const -> uint32_t {
             CheckBounds(x, y);
 
             return Data[Stride * y + x];
@@ -295,104 +285,21 @@ namespace cherry {
         }
 
 
-        inline auto Copy(
-                const Canvas & src,
-                int64_t left,
-                int64_t top,
-                int64_t right,
-                int64_t bottom) -> Canvas & {
-            if (src.Empty) {
-                return *this;
-            }
-
-            const auto target_width = std::abs(left - right);
-            const auto target_height = std::abs(top - bottom);
-
-            const auto mirrored_x = left > right;
-            const auto mirrored_y = top > bottom;
-
-            SortTopLeft(left, top, right, bottom);
-
-            auto target = SubCanvas(
-                    std::clamp<decltype(left)>(left, 0, Width),
-                    std::clamp<decltype(top)>(top, 0, Height),
-                    std::clamp<decltype(right)>(right, 0, Width),
-                    std::clamp<decltype(bottom)>(bottom, 0, Height)
-            );
-
-            if (target.Empty) {
-                return *this;
-            }
-
-            auto src_x0 = int64_t{ 0 };
-            auto src_y0 = int64_t{ 0 };
-            auto src_x1 = int64_t{ src.Width };
-            auto src_y1 = int64_t{ src.Height };
-
-            if (left < 0) {
-                src_x0 = -left * src.Width / target_width;
-            }
-            if (top < 0) {
-                src_y0 = -top * src.Height / target_height;
-            }
-            if (right >= Width) {
-                src_x1 = (Width - left) * src.Width / target_width;
-            }
-            if (bottom >= Height) {
-                src_y1 = (Height - top) * src.Height / target_height;
-            }
-
-            if (mirrored_x) {
-                src_x0 = src.Width - src_x0;
-                src_x1 = src.Width - src_x1;
-            }
-
-            if (mirrored_y) {
-                src_y0 = src.Height - src_y0;
-                src_y1 = src.Height - src_y1;
-            }
-
-            auto src2 = src.SubCanvas(src_x0, src_y0, src_x1, src_y1);
-
-            if (target.Empty) {
-                return *this;
-            }
-
-            for (auto y = decltype(target.Height){ 0 }; y < target.Height; y += 1) {
-                auto src_y = y * src2.Height / target.Height;
-                if (mirrored_y) {
-                    src_y = src2.Height - 1 - src_y;
-                }
-
-                for (auto x = decltype(target.Width){ 0 }; x < target.Width; x += 1) {
-                    auto src_x = x * src2.Width / target.Width;
-                    if (mirrored_x) {
-                        src_x = src2.Width - 1 - src_x;
-                    }
-
-                    target.BlendPixel(x, y, src2.Pixel(src_x, src_y));
-                }
-            }
-
-            return *this;
-        }
-
-
-    private:
         [[nodiscard]]
         inline auto IsWithinBounds(
-                int64_t x,
-                int64_t y) const -> bool {
+                int x,
+                int y) const -> bool {
             return x >= 0 and y >= 0 and x < Width and y < Height;
         }
 
 
+    private:
 #ifdef CHERRY_CHECK_BOUNDS
 
 
         inline auto CheckBounds(
-                int64_t x,
-                int64_t y) const -> void {
+                int x,
+                int y) const -> void {
             if (IsWithinBounds(x, y)) {
                 return;
             }
@@ -410,8 +317,8 @@ namespace cherry {
 
 
         inline auto CheckBounds(
-                int64_t,
-                int64_t) const -> void {}
+                int,
+                int) const -> void {}
 
 
 #endif // CHERRY_CHECK_BOUNDS
@@ -419,8 +326,8 @@ namespace cherry {
 
         static inline auto BlendOverwrite(
                 Canvas & canvas,
-                int64_t x,
-                int64_t y,
+                int x,
+                int y,
                 uint32_t color) -> void {
             canvas.OverwritePixel(x, y, color);
         }
@@ -428,8 +335,8 @@ namespace cherry {
 
         static inline auto BlendAlpha(
                 Canvas & canvas,
-                int64_t x,
-                int64_t y,
+                int x,
+                int y,
                 uint32_t color) -> void {
             canvas.OverwritePixel(x, y, AlphaBlend(color, canvas.Pixel(x, y)));
         }
@@ -437,24 +344,155 @@ namespace cherry {
 
         static inline auto BlendFastAlpha(
                 Canvas & canvas,
-                int64_t x,
-                int64_t y,
+                int x,
+                int y,
                 uint32_t color) -> void {
             canvas.OverwritePixel(x, y, FastAlphaBlend(color, canvas.Pixel(x, y)));
         }
     };
 
 
+    namespace transform {
+        [[nodiscard]]
+        constexpr inline auto ApplyRotationX(
+                int x,
+                int y,
+                double sin,
+                double cos) -> int {
+            return static_cast<int>(cos * x + sin * y);
+        }
+
+
+        [[nodiscard]]
+        constexpr inline auto ApplyRotationY(
+                int x,
+                int y,
+                double sin,
+                double cos) -> int {
+            return static_cast<int>(-sin * x + cos * y);
+        }
+
+
+        [[nodiscard]]
+        constexpr inline auto ApplyRotation(
+                int x,
+                int y,
+                double sin,
+                double cos) -> std::pair<int, int> {
+            return { ApplyRotationX(x, y, sin, cos), ApplyRotationY(x, y, sin, cos) };
+        }
+
+
+        [[maybe_unused]]
+        inline auto Copy(
+                const Canvas & src,
+                Canvas & dst,
+                int left,
+                int top,
+                int right,
+                int bottom) -> Canvas & {
+            if (src.Empty) {
+                return dst;
+            }
+
+            const auto target_width = std::abs(left - right);
+            const auto target_height = std::abs(top - bottom);
+
+            const auto mirrored_x = left > right;
+            const auto mirrored_y = top > bottom;
+
+            SortTopLeft(left, top, right, bottom);
+
+            const auto dst_start_y = std::max(top, 0);
+            const auto dst_end_y = std::min(bottom, dst.Height);
+
+            const auto dst_start_x = std::max(left, 0);
+            const auto dst_end_x = std::min(right, dst.Width);
+
+            for (auto dst_y = dst_start_y; dst_y < dst_end_y; dst_y += 1) {
+                auto src_y = (dst_y - top) * src.Height / target_height;
+                if (mirrored_y) {
+                    src_y = src.Height - 1 - src_y;
+                }
+
+                for (auto dst_x = dst_start_x; dst_x < dst_end_x; dst_x += 1) {
+                    auto src_x = (dst_x - left) * src.Width / target_width;
+                    if (mirrored_x) {
+                        src_x = src.Width - 1 - src_x;
+                    }
+
+                    dst.BlendPixel(dst_x, dst_y, src.Pixel(src_x, src_y));
+                }
+            }
+
+            return dst;
+        }
+
+
+        [[maybe_unused]]
+        inline auto Rotate(
+                const Canvas & src,
+                Canvas & dst,
+                int src_origin_x,
+                int src_origin_y,
+                int dst_origin_x,
+                int dst_origin_y,
+                double radians) -> Canvas & {
+            const auto sin = std::sin(radians);
+            const auto cos = std::cos(radians);
+
+            const auto src_left = -src_origin_x;
+            const auto src_top = -src_origin_y;
+            const auto src_right = src_left + src.Width;
+            const auto src_bottom = src_top + src.Height;
+
+            const auto[ax, ay] = ApplyRotation(src_left, src_top, sin, cos);
+            const auto[bx, by] = ApplyRotation(src_right, src_top, sin, cos);
+            const auto[cx, cy] = ApplyRotation(src_right, src_bottom, sin, cos);
+            const auto[dx, dy] = ApplyRotation(src_left, src_bottom, sin, cos);
+
+            auto[min_x, max_x] = std::minmax({ ax, bx, cx, dx });
+            min_x += dst_origin_x;
+            max_x += dst_origin_x;
+
+            auto[min_y, max_y] = std::minmax({ ay, by, cy, dy });
+            min_y += dst_origin_y;
+            max_y += dst_origin_y;
+
+            const auto start_y = std::max(min_y, 0);
+            const auto end_y = std::min(max_y, dst.Height);
+
+            const auto start_x = std::max(min_x, 0);
+            const auto end_x = std::min(max_x, dst.Width);
+
+            for (auto y2 = start_y; y2 < end_y; y2 += 1) {
+                for (auto x2 = start_x; x2 < end_x; x2 += 1) {
+                    auto[x1, y1] = ApplyRotation(x2 - dst_origin_x, y2 - dst_origin_y, -sin, cos);
+                    x1 += src_origin_x;
+                    y1 += src_origin_y;
+
+                    dst.BlendPixel(
+                            x2, y2,
+                            src.IsWithinBounds(x1, y1) ? src.Pixel(x1, y1) : CombineRGBA(0xFF, 0xFF, 0xFF, 0x00)
+                    );
+                }
+            }
+
+            return dst;
+        }
+    }
+
+
     namespace drawing {
         inline auto LineLow(
                 Canvas & canvas,
-                int64_t x0,
-                int64_t y0,
-                int64_t x1,
-                int64_t y1,
+                int x0,
+                int y0,
+                int x1,
+                int y1,
                 uint32_t color) -> void {
             const auto dx = x1 - x0;
-            const auto[dy, yi] = ((y1 - y0) >= 0) ? std::tuple(y1 - y0, 1) : std::tuple(y0 - y1, -1);
+            const auto[dy, yi] = ((y1 - y0) >= 0) ? std::pair(y1 - y0, 1) : std::pair(y0 - y1, -1);
 
             auto D = 2 * dy - dx;
             auto y = y0;
@@ -475,12 +513,12 @@ namespace cherry {
 
         inline auto LineHigh(
                 Canvas & canvas,
-                int64_t x0,
-                int64_t y0,
-                int64_t x1,
-                int64_t y1,
+                int x0,
+                int y0,
+                int x1,
+                int y1,
                 uint32_t color) -> void {
-            const auto[dx, xi] = ((x1 - x0) >= 0) ? std::tuple(x1 - x0, 1) : std::tuple(x0 - x1, -1);
+            const auto[dx, xi] = ((x1 - x0) >= 0) ? std::pair(x1 - x0, 1) : std::pair(x0 - x1, -1);
             const auto dy = y1 - y0;
 
             auto D = 2 * dx - dy;
@@ -503,10 +541,10 @@ namespace cherry {
         [[maybe_unused]]
         inline auto Line(
                 Canvas & canvas,
-                int64_t x0,
-                int64_t y0,
-                int64_t x1,
-                int64_t y1,
+                int x0,
+                int y0,
+                int x1,
+                int y1,
                 uint32_t color) -> Canvas & {
             if (std::abs(y1 - y0) < std::abs(x1 - x0)) {
                 if (x0 > x1) {
@@ -533,10 +571,10 @@ namespace cherry {
         [[maybe_unused]]
         inline auto FillRectangle(
                 Canvas & canvas,
-                int64_t left,
-                int64_t top,
-                int64_t right,
-                int64_t bottom,
+                int left,
+                int top,
+                int right,
+                int bottom,
                 uint32_t color) -> Canvas & {
             canvas.SubCanvas(left, top, right, bottom).Fill(color);
 
@@ -547,7 +585,7 @@ namespace cherry {
         [[maybe_unused]]
         inline auto Shape(
                 Canvas & canvas,
-                const std::vector<std::tuple<int64_t, int64_t>> & vertices,
+                const std::vector<std::pair<int, int>> & vertices,
                 uint32_t color) -> Canvas & {
             if (vertices.empty()) {
                 return canvas;

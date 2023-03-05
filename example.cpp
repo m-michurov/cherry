@@ -13,16 +13,16 @@
 
 
 auto CreateCanvasData(
-        int64_t width,
-        int64_t height) -> std::vector<uint32_t> {
+        int width,
+        int height) -> std::vector<uint32_t> {
     return std::vector<uint32_t>(width * height);
 }
 
 
 auto CreateCanvas(
         std::vector<uint32_t> & canvas_data,
-        int64_t width,
-        int64_t height) -> cherry::Canvas {
+        int width,
+        int height) -> cherry::Canvas {
     return cherry::Canvas(canvas_data.data(), width, height, width)
             .SetBlendMode(cherry::PixelBlendMode::OVERWRITE)
             .Fill(0xFFFFFFFF)
@@ -40,12 +40,13 @@ auto FunkyTree(
     const auto left_offset = canvas.Width;
     const auto top_offset = canvas.Height;
 
-    canvas.Copy(
+    cherry::transform::Copy(
             tree,
+            canvas,
             left,
             top,
-            static_cast<int64_t>(left + std::cos(time_s) * left_offset),
-            static_cast<int64_t>(top + std::sin(time_s) * top_offset)
+            static_cast<int>(left + std::cos(time_s) * left_offset),
+            static_cast<int>(top + std::sin(time_s) * top_offset)
     );
 }
 
@@ -107,8 +108,8 @@ auto TreeBenchmark(std::chrono::seconds benchmark_duration) -> void {
     auto tree_data = std::vector<uint8_t>(tree.getPixelsPtr(), tree.getPixelsPtr() + tree_data_bytes_count);
     const auto sprite_canvas = cherry::Canvas(
             reinterpret_cast<uint32_t *>(tree_data.data()),
-            tree_width,
-            tree_height
+            static_cast<int>(tree_width),
+            static_cast<int>(tree_height)
     );
 
     auto texture = sf::Texture();
@@ -138,23 +139,28 @@ auto TreeBenchmark(std::chrono::seconds benchmark_duration) -> void {
         }
 
         auto start = std::chrono::steady_clock::now();
-        canvas
-                .SetBlendMode(cherry::PixelBlendMode::OVERWRITE)
-                .Copy(background, 0, 0, width, height);
+        cherry::transform::Copy(
+                background,
+                canvas.SetBlendMode(cherry::PixelBlendMode::OVERWRITE),
+                0,
+                0,
+                canvas.Width,
+                canvas.Height
+        );
         background_draw_time += Elapsed<std::chrono::milliseconds, double>(start);
 
         const auto t = Elapsed<std::chrono::milliseconds, double>(benchmark_start) / 1000.0;
         start = std::chrono::steady_clock::now();
-        canvas
-                .SetBlendMode(cherry::PixelBlendMode::FAST_ALPHA_COMPOSITING)
-                .Copy(
-                        sprite_canvas,
-                        canvas.Width / 2 - sprite_canvas.Width / 5,
-                        canvas.Height / 2 - sprite_canvas.Height / 5,
-                        canvas.Width / 2 + sprite_canvas.Width / 5,
-                        canvas.Height / 2 + sprite_canvas.Height / 5
-                );
-        FunkyTree(canvas.SetBlendMode(cherry::PixelBlendMode::FAST_ALPHA_COMPOSITING), sprite_canvas, t);
+        cherry::transform::Rotate(
+                sprite_canvas,
+                canvas.SetBlendMode(cherry::PixelBlendMode::FAST_ALPHA_COMPOSITING),
+                sprite_canvas.Width / 2,
+                sprite_canvas.Height * 7 / 8,
+                canvas.Width / 2,
+                canvas.Height / 2,
+                t
+        );
+        FunkyTree(canvas.SetBlendMode(cherry::PixelBlendMode::FAST_ALPHA_COMPOSITING), sprite_canvas, t * 2);
         tree_draw_time += Elapsed<std::chrono::milliseconds, double>(start);
 
         const auto origin_x = canvas.Width / 2;
@@ -202,7 +208,7 @@ auto TreeBenchmark(std::chrono::seconds benchmark_duration) -> void {
 
 
 auto Main([[maybe_unused]] const std::string & file_name) -> void {
-    TreeBenchmark(std::chrono::seconds{ 60 });
+    TreeBenchmark(std::chrono::seconds{ 15 });
 }
 
 
