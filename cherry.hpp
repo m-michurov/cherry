@@ -9,6 +9,7 @@
 #include <cstdint>
 
 
+// TODO use int32_t/int64_t everywhere to avoid unnecessary casts
 namespace cherry {
 #ifdef CHERRY_CLAMP
     template<typename T>
@@ -45,13 +46,18 @@ namespace cherry {
     }
 
 
-    [[nodiscard]]
-    inline auto Sort(
-            int64_t x0,
-            int64_t y0,
-            int64_t x1,
-            int64_t y1) -> std::tuple<decltype(x0), decltype(y0), decltype(x1), decltype(y1)> {
-        return { std::min(x0, x1), std::min(y0, y1), std::max(x0, x1), std::max(y0, y1) };
+    inline auto SortTopLeft(
+            int64_t & x0,
+            int64_t & y0,
+            int64_t & x1,
+            int64_t & y1) -> void {
+        if (x1 < x0) {
+            std::swap(x0, x1);
+        }
+
+        if (y1 < y0) {
+            std::swap(y0, y1);
+        }
     }
 
 
@@ -119,6 +125,10 @@ namespace cherry {
             uint64_t foreground,
             uint64_t background) -> uint32_t {
         const auto fg_a = ((foreground & MASK_ALPHA) >> SHIFT_ALPHA);
+        if (not fg_a) {
+            return background;
+        }
+
         const auto alpha = fg_a + 1;
         const auto inv_alpha = 256 - fg_a;
 
@@ -138,7 +148,7 @@ namespace cherry {
     };
 
 
-    class Canvas {
+    class Canvas final {
         PixelBlendMode blend_mode{ PixelBlendMode::OVERWRITE };
 
         void (* BlendPixelFn)(
@@ -225,7 +235,7 @@ namespace cherry {
                 int64_t y0,
                 int64_t x1,
                 int64_t y1) const -> Canvas {
-            std::tie(x0, y0, x1, y1) = Sort(x0, y0, x1, y1);
+            SortTopLeft(x0, y0, x1, y1);
 
             CheckBounds(x0, y0);
             CheckBounds(x1 - 1, y1 - 1);
@@ -301,10 +311,7 @@ namespace cherry {
             const auto mirrored_x = left > right;
             const auto mirrored_y = top > bottom;
 
-            auto src_x0 = int64_t{ 0 };
-            auto src_y0 = int64_t{ 0 };
-            auto src_x1 = int64_t{ src.Width };
-            auto src_y1 = int64_t{ src.Height };
+            SortTopLeft(left, top, right, bottom);
 
             auto target = SubCanvas(
                     std::clamp<decltype(left)>(left, 0, Width),
@@ -313,7 +320,14 @@ namespace cherry {
                     std::clamp<decltype(bottom)>(bottom, 0, Height)
             );
 
-            std::tie(left, top, right, bottom) = Sort(left, top, right, bottom);
+            if (target.Empty) {
+                return *this;
+            }
+
+            auto src_x0 = int64_t{ 0 };
+            auto src_y0 = int64_t{ 0 };
+            auto src_x1 = int64_t{ src.Width };
+            auto src_y1 = int64_t{ src.Height };
 
             if (left < 0) {
                 src_x0 = -left * src.Width / target_width;
