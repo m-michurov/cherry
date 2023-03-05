@@ -15,5 +15,9 @@ if (CMAKE_BUILD_TYPE STREQUAL "Debug")
     add_definitions(-DDEBUG)
 endif ()
 
+if (CMAKE_BUILD_TYPE STREQUAL "Release")
+    add_compile_options(-Ofast)
+endif ()
+
 add_executable(simple_example ${SOURCE_FILES})
 target_link_libraries(simple_example sfml-graphics)
