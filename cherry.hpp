@@ -3,6 +3,7 @@
 #ifdef CHERRY_CHECK_BOUNDS
 #include <stdexcept>
 #endif
+#include <cmath>
 #include <limits>
 #include <tuple>
 #include <algorithm>
@@ -185,6 +186,7 @@ namespace cherry {
         }
 
 
+        [[maybe_unused]]
         Canvas(
                 uint32_t * data,
                 int width,
@@ -359,7 +361,7 @@ namespace cherry {
                 int y,
                 double sin,
                 double cos) -> int {
-            return static_cast<int>(cos * x + sin * y);
+            return std::lround(cos * x + sin * y);
         }
 
 
@@ -369,7 +371,7 @@ namespace cherry {
                 int y,
                 double sin,
                 double cos) -> int {
-            return static_cast<int>(-sin * x + cos * y);
+            return std::lround(-sin * x + cos * y);
         }
 
 
@@ -583,7 +585,7 @@ namespace cherry {
 
 
         [[maybe_unused]]
-        inline auto Shape(
+        inline auto Polygon(
                 Canvas & canvas,
                 const std::vector<std::pair<int, int>> & vertices,
                 uint32_t color) -> Canvas & {
@@ -597,6 +599,77 @@ namespace cherry {
 
                 Line(canvas, x0, y0, x1, y1, color);
             }
+
+            return canvas;
+        }
+
+
+        inline auto FillFlatTriangle(
+                Canvas & canvas,
+                int x0,
+                int y0,
+                int x1,
+                int y1,
+                int x2,
+                uint32_t color) -> Canvas & {
+            if (y1 == y0) {
+                return canvas;
+            }
+
+            const auto dy = y1 > y0 ? 1 : -1;
+
+            if (x2 < x1) {
+                std::swap(x2, x1);
+            }
+
+            for (
+                    auto y = std::clamp(y0, 0, canvas.Height - 1);
+                    y != std::clamp(y1 + dy, 0, canvas.Height - 1);
+                    y += dy) {
+                const auto x_left = x0 + (y - y0) * (x1 - x0) / (y1 - y0);
+                const auto x_right = x0 + (y - y0) * (x2 - x0) / (y1 - y0);
+
+                for (auto x = std::max<int>(0, x_left); x < std::min<int>(canvas.Width, x_right + 1); x += 1) {
+                    canvas.BlendPixel(x, y, color);
+                }
+            }
+            return canvas;
+        }
+
+
+        [[maybe_unused]]
+        inline auto FillTriangle(
+                Canvas & canvas,
+                int x0,
+                int y0,
+                int x1,
+                int y1,
+                int x2,
+                int y2,
+                uint32_t color) -> Canvas & {
+            if (y0 > y1) {
+                std::swap(x0, x1);
+                std::swap(y0, y1);
+            }
+
+            if (y0 > y2) {
+                std::swap(x0, x2);
+                std::swap(y0, y2);
+            }
+
+            if (y1 > y2) {
+                std::swap(x1, x2);
+                std::swap(y1, y2);
+            }
+
+            if (y1 == y2) {
+                return FillFlatTriangle(canvas, x0, y0, x1, y1, x2, color);
+            }
+
+            const auto x_intermediate = x0 + (y1 - y0) * (x2 - x0) / (y2 - y0);
+
+            FillFlatTriangle(canvas, x0, y0, x1, y1, x_intermediate, color);
+            FillFlatTriangle(canvas, x2, y2, x1, y1 + 1, x_intermediate, color);
 
             return canvas;
         }
