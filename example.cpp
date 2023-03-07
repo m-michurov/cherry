@@ -12,33 +12,6 @@
 #include "cherry.hpp"
 
 
-auto CreateCanvasData(
-        int width,
-        int height) -> std::vector<uint32_t> {
-    return std::vector<uint32_t>(width * height);
-}
-
-
-auto CreateCanvasData(
-        const sf::Image & image
-) -> std::vector<uint8_t> {
-    const auto[width, height] = image.getSize();
-    const auto tree_data_bytes_count = 4 * width * height;
-    return { image.getPixelsPtr(), image.getPixelsPtr() + tree_data_bytes_count };
-}
-
-
-auto CreateCanvas(
-        std::vector<uint32_t> & canvas_data,
-        int width,
-        int height) -> cherry::Canvas {
-    return cherry::Canvas(canvas_data.data(), width, height, width)
-            .SetBlendMode(cherry::PixelBlendMode::OVERWRITE)
-            .Fill(0xFFFFFFFF)
-            .SetBlendMode(cherry::PixelBlendMode::ALPHA_COMPOSITING);
-}
-
-
 auto FunkyTree(
         cherry::Canvas & canvas,
         const cherry::Canvas & tree,
@@ -64,7 +37,7 @@ auto Gradient(cherry::Canvas & canvas) -> cherry::Canvas & {
     for (auto y = decltype(canvas.Height){ 0 }; y < canvas.Height; y += 1) {
         for (auto x = decltype(canvas.Width){ 0 }; x < canvas.Width; x += 1) {
             const auto t = static_cast<uint8_t>((255.0 * (x + y)) / (canvas.Width + canvas.Height));
-            canvas.BlendPixel(x, y, cherry::CombineRGBA(t, 128 - t / 2, 192, 192));
+            canvas.BlendPixel(x, y, cherry::color::FromRGBA(t, 128 - t / 2, 192, 192));
         }
     }
 
@@ -73,8 +46,8 @@ auto Gradient(cherry::Canvas & canvas) -> cherry::Canvas & {
 
 
 auto CheckeredBackground(cherry::Canvas & canvas) -> cherry::Canvas & {
-    const auto white = cherry::CombineRGBA(255, 255, 255, 255);
-    const auto gray = cherry::CombineRGBA(192, 192, 192, 255);
+    const auto white = cherry::color::FromRGBA(255, 255, 255, 128);
+    const auto gray = cherry::color::FromRGBA(192, 192, 192, 128);
 
     for (auto y = decltype(canvas.Height){ 0 }; y < canvas.Height; y += 1) {
         for (auto x = decltype(canvas.Width){ 0 }; x < canvas.Width; x += 1) {
@@ -101,18 +74,22 @@ auto TreeBenchmark(std::chrono::seconds benchmark_duration) -> void {
 
     auto window = sf::RenderWindow({ width, height }, "Funky Tree Benchmark");
 
-    auto background_data = CreateCanvasData(width, height);
-    auto background = CreateCanvas(background_data, width, height);
-    CheckeredBackground(background);
-    Gradient(background);
+    auto background_data = cherry::utility::PixelBuffer(width, height, cherry::color::FromRGBA(0, 0, 0, 255));
+    auto background = cherry::Canvas(background_data.data(), width, height);
+    CheckeredBackground(background.SetBlendMode(cherry::color::BlendMode::FAST_ALPHA_COMPOSITING));
+    Gradient(background.SetBlendMode(cherry::color::BlendMode::FAST_ALPHA_COMPOSITING));
 
-    auto canvas_data = CreateCanvasData(width, height);
-    auto canvas = CreateCanvas(canvas_data, width, height)
-            .SetBlendMode(cherry::PixelBlendMode::ALPHA_COMPOSITING);
+    auto canvas_data = cherry::utility::PixelBuffer(width, height);
+    auto canvas = cherry::Canvas(canvas_data.data(), width, height)
+            .SetBlendMode(cherry::color::BlendMode::ALPHA_COMPOSITING);
 
     auto img = sf::Image();
     img.loadFromFile(std::string("../blue_tree.bmp"));
-    auto blue_tree_data = CreateCanvasData(img);
+    auto blue_tree_data = cherry::utility::PixelBuffer(
+            img.getPixelsPtr(),
+            static_cast<int>(img.getSize().x),
+            static_cast<int>(img.getSize().y)
+    );
     const auto blue_tree = cherry::Canvas(
             reinterpret_cast<uint32_t *>(blue_tree_data.data()),
             static_cast<int>(img.getSize().x),
@@ -120,7 +97,11 @@ auto TreeBenchmark(std::chrono::seconds benchmark_duration) -> void {
     );
 
     img.loadFromFile(std::string("../red_tree.bmp"));
-    auto red_tree_data = CreateCanvasData(img);
+    auto red_tree_data = cherry::utility::PixelBuffer(
+            img.getPixelsPtr(),
+            static_cast<int>(img.getSize().x),
+            static_cast<int>(img.getSize().y)
+    );
     const auto red_tree = cherry::Canvas(
             reinterpret_cast<uint32_t *>(red_tree_data.data()),
             static_cast<int>(img.getSize().x),
@@ -153,7 +134,7 @@ auto TreeBenchmark(std::chrono::seconds benchmark_duration) -> void {
 
         cherry::transform::Copy(
                 background,
-                canvas.SetBlendMode(cherry::PixelBlendMode::OVERWRITE),
+                canvas.SetBlendMode(cherry::color::BlendMode::OVERWRITE),
                 0,
                 0,
                 canvas.Width,
@@ -163,14 +144,14 @@ auto TreeBenchmark(std::chrono::seconds benchmark_duration) -> void {
         const auto t = Elapsed<std::chrono::milliseconds, double>(benchmark_start) / 1000.0;
         cherry::transform::Rotate(
                 blue_tree,
-                canvas.SetBlendMode(cherry::PixelBlendMode::FAST_ALPHA_COMPOSITING),
+                canvas.SetBlendMode(cherry::color::BlendMode::FAST_ALPHA_COMPOSITING),
                 blue_tree.Width / 2,
                 blue_tree.Height * 7 / 8,
                 canvas.Width / 2,
                 canvas.Height / 2,
                 t
         );
-        FunkyTree(canvas.SetBlendMode(cherry::PixelBlendMode::FAST_ALPHA_COMPOSITING), red_tree, t * 2);
+        FunkyTree(canvas.SetBlendMode(cherry::color::BlendMode::FAST_ALPHA_COMPOSITING), red_tree, t * 2);
 
         const auto origin_x = canvas.Width / 2;
         const auto origin_y = canvas.Height / 2;
@@ -185,7 +166,7 @@ auto TreeBenchmark(std::chrono::seconds benchmark_duration) -> void {
                         { origin_x + r * std::cos(t + 2 * Pi / 2), origin_y - r * std::sin(t + 2 * Pi / 2) },
                         { origin_x + r * std::cos(t + 3 * Pi / 2), origin_y - r * std::sin(t + 3 * Pi / 2) },
                 },
-                cherry::CombineRGBA(0, 0, 0)
+                cherry::color::FromRGBA(0, 0, 0)
         );
 
         cherry::drawing::Polygon(
@@ -208,15 +189,15 @@ auto TreeBenchmark(std::chrono::seconds benchmark_duration) -> void {
                                 origin_y + 2 * r * std::sin(2 * t + 3 * Pi / 2)
                         },
                 },
-                cherry::CombineRGBA(0, 0, 0)
+                cherry::color::FromRGBA(0, 0, 0)
         );
 
         cherry::drawing::FillTriangle(
-                canvas.SetBlendMode(cherry::PixelBlendMode::FAST_ALPHA_COMPOSITING),
+                canvas.SetBlendMode(cherry::color::BlendMode::FAST_ALPHA_COMPOSITING),
                 50, 50,
                 150 + std::lround(400 * std::sin(t * 2)), 180 + std::lround(400 * std::cos(t * 2)),
                 400, 30,
-                cherry::CombineRGBA(192, 164, 255, 128)
+                cherry::color::FromRGBA(192, 164, 255, 128)
         );
 
         texture.update(canvas.DataUint8);

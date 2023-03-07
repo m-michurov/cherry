@@ -9,138 +9,158 @@
 #include <algorithm>
 #include <cstdint>
 #include <utility>
+#include <type_traits>
+#include <vector>
 
 
 namespace cherry {
-#ifdef CHERRY_CLAMP
-    template<typename T>
-    [[nodiscard]]
-    inline auto ClampTo(int value) -> T {
-        constexpr auto min = static_cast<decltype(value)>(std::numeric_limits<T>::min());
-        constexpr auto max = static_cast<decltype(value)>(std::numeric_limits<T>::max());
-
-        return static_cast<T>(std::clamp(value, min, max));
-    }
-#endif // CHERRY_CLAMP
-
-
-#ifdef CHERRY_CLAMP_LINE
-    inline auto ClampLine(
-            int x0,
-            int y0,
-            int x1,
-            int y1,
-            int width,
-            int height) -> std::tuple<decltype(x0), decltype(y0), decltype(x1), decltype(y1)> {
-
-    }
-#endif
-
-
-    inline auto SortTopLeft(
-            int & x0,
-            int & y0,
-            int & x1,
-            int & y1) -> void {
-        if (x1 < x0) {
-            std::swap(x0, x1);
+    namespace utility {
+        [[maybe_unused]]
+        [[nodiscard]]
+        inline auto PixelBuffer(
+                int stride,
+                int height) -> std::vector<uint32_t> {
+            return std::vector<uint32_t>(stride * height);
         }
 
-        if (y1 < y0) {
-            std::swap(y0, y1);
+
+        [[maybe_unused]]
+        [[nodiscard]]
+        inline auto PixelBuffer(
+                int stride,
+                int height,
+                uint32_t fill_color) -> std::vector<uint32_t> {
+            auto buffer = PixelBuffer(stride, height);
+
+            std::fill(buffer.begin(), buffer.end(), fill_color);
+
+            return buffer;
+        }
+
+
+        [[maybe_unused]]
+        [[nodiscard]]
+        inline auto PixelBuffer(
+                const uint8_t * data,
+                int stride,
+                int height) -> std::vector<uint32_t> {
+            const auto size = stride * height;
+            auto buffer = std::vector<uint32_t>(
+                    reinterpret_cast<const uint32_t *>(data),
+                    reinterpret_cast<const uint32_t *>(data) + size
+            );
+
+            return buffer;
+        }
+
+
+        inline auto SortTopLeft(
+                int & x0,
+                int & y0,
+                int & x1,
+                int & y1) -> void {
+            if (x1 < x0) {
+                std::swap(x0, x1);
+            }
+
+            if (y1 < y0) {
+                std::swap(y0, y1);
+            }
         }
     }
 
 
-    constexpr auto INDEX_RED = 0u;
-    constexpr auto INDEX_GREEN = 1u;
-    constexpr auto INDEX_BLUE = 2u;
-    constexpr auto INDEX_ALPHA = 3u;
+    namespace color {
+        constexpr auto INDEX_RED = 0u;
+        constexpr auto INDEX_GREEN = 1u;
+        constexpr auto INDEX_BLUE = 2u;
+        constexpr auto INDEX_ALPHA = 3u;
 
 
-    constexpr auto SHIFT_RED = 8u * INDEX_RED;
-    constexpr auto SHIFT_GREEN = 8u * INDEX_GREEN;
-    constexpr auto SHIFT_BLUE = 8u * INDEX_BLUE;
-    constexpr auto SHIFT_ALPHA = 8u * INDEX_ALPHA;
+        constexpr auto SHIFT_RED = 8u * INDEX_RED;
+        constexpr auto SHIFT_GREEN = 8u * INDEX_GREEN;
+        constexpr auto SHIFT_BLUE = 8u * INDEX_BLUE;
+        constexpr auto SHIFT_ALPHA = 8u * INDEX_ALPHA;
 
 
-    constexpr auto MASK_RED_BLUE = (0xFF << SHIFT_RED) | (0xFF << SHIFT_BLUE);
-    constexpr auto MASK_GREEN = (0xFF << SHIFT_GREEN);
-    constexpr auto MASK_ALPHA = (0xFF << SHIFT_ALPHA);
+        constexpr auto MASK_RED_BLUE = (0xFF << SHIFT_RED) | (0xFF << SHIFT_BLUE);
+        constexpr auto MASK_GREEN = (0xFF << SHIFT_GREEN);
+        constexpr auto MASK_ALPHA = (0xFF << SHIFT_ALPHA);
 
 
-    [[nodiscard]]
-    constexpr inline auto CombineRGBA(
-            uint32_t red,
-            uint32_t green,
-            uint32_t blue,
-            uint32_t alpha = 0xFF) -> uint32_t {
-        return
-                ((red & 0xFF) << SHIFT_RED)
-                | ((green & 0xFF) << SHIFT_GREEN)
-                | ((blue & 0xFF) << SHIFT_BLUE)
-                | ((alpha & 0xFF) << SHIFT_ALPHA);
-    }
+        [[nodiscard]]
+        constexpr inline auto FromRGBA(
+                uint32_t red,
+                uint32_t green,
+                uint32_t blue,
+                uint32_t alpha = 0xFF) -> uint32_t {
+            return
+                    ((red & 0xFF) << SHIFT_RED)
+                    | ((green & 0xFF) << SHIFT_GREEN)
+                    | ((blue & 0xFF) << SHIFT_BLUE)
+                    | ((alpha & 0xFF) << SHIFT_ALPHA);
+        }
 
 
-    [[nodiscard]]
-    constexpr inline auto DeconstructRGBA(
-            uint32_t pixel) -> std::tuple<uint8_t, uint8_t, uint8_t, uint8_t> {
-        return {
-                (pixel >> SHIFT_RED) & 0xFF,
-                (pixel >> SHIFT_GREEN) & 0xFF,
-                (pixel >> SHIFT_BLUE) & 0xFF,
-                (pixel >> SHIFT_ALPHA) & 0xFF,
+        [[nodiscard]]
+        constexpr inline auto ToRGBA(
+                uint32_t pixel) -> std::tuple<uint8_t, uint8_t, uint8_t, uint8_t> {
+            return {
+                    (pixel >> SHIFT_RED) & 0xFF,
+                    (pixel >> SHIFT_GREEN) & 0xFF,
+                    (pixel >> SHIFT_BLUE) & 0xFF,
+                    (pixel >> SHIFT_ALPHA) & 0xFF,
+            };
+        }
+
+
+        enum class BlendMode {
+            OVERWRITE,
+            ALPHA_COMPOSITING,
+            FAST_ALPHA_COMPOSITING
         };
-    }
 
 
-    [[nodiscard]]
-    inline auto AlphaBlend(
-            uint32_t foreground,
-            uint32_t background) -> uint32_t {
-        const auto[fg_r, fg_g, fg_b, fg_a] = DeconstructRGBA(foreground);
-        const auto[bg_r, bg_g, bg_b, bg_a] = DeconstructRGBA(background);
+        [[nodiscard]]
+        inline auto AlphaBlend(
+                uint32_t foreground,
+                uint32_t background) -> uint32_t {
+            const auto[fg_r, fg_g, fg_b, fg_a] = ToRGBA(foreground);
+            const auto[bg_r, bg_g, bg_b, bg_a] = ToRGBA(background);
 
-        const auto a = fg_a + bg_a * (255 - fg_a) / 255;
-        const auto r = (fg_r * fg_a + bg_r * bg_a * (255 - fg_a) / 255) / a;
-        const auto g = (fg_g * fg_a + bg_g * bg_a * (255 - fg_a) / 255) / a;
-        const auto b = (fg_b * fg_a + bg_b * bg_a * (255 - fg_a) / 255) / a;
+            const auto a = fg_a + bg_a * (255 - fg_a) / 255;
+            const auto r = (fg_r * fg_a + bg_r * bg_a * (255 - fg_a) / 255) / a;
+            const auto g = (fg_g * fg_a + bg_g * bg_a * (255 - fg_a) / 255) / a;
+            const auto b = (fg_b * fg_a + bg_b * bg_a * (255 - fg_a) / 255) / a;
 
-        return CombineRGBA(r, g, b, a);
-    }
-
-
-    [[nodiscard]]
-    inline auto FastAlphaBlend(
-            uint64_t foreground,
-            uint64_t background) -> uint32_t {
-        const auto fg_a = ((foreground & MASK_ALPHA) >> SHIFT_ALPHA);
-        if (not fg_a) {
-            return background;
+            return FromRGBA(r, g, b, a);
         }
 
-        const auto alpha = fg_a + 1;
-        const auto inv_alpha = 256 - fg_a;
 
-        const auto rb =
-                (alpha * (foreground & MASK_RED_BLUE) + inv_alpha * (background & MASK_RED_BLUE)) >> 8;
-        const auto g =
-                (alpha * (foreground & MASK_GREEN) + inv_alpha * (background & MASK_GREEN)) >> 8;
+        [[nodiscard]]
+        inline auto FastAlphaBlend(
+                uint64_t foreground,
+                uint64_t background) -> uint32_t {
+            const auto fg_a = ((foreground & MASK_ALPHA) >> SHIFT_ALPHA);
+            if (not fg_a) {
+                return background;
+            }
 
-        return (rb & MASK_RED_BLUE) | (g & MASK_GREEN) | (~0 & MASK_ALPHA);
+            const auto alpha = fg_a + 1;
+            const auto inv_alpha = 256 - fg_a;
+
+            const auto rb =
+                    (alpha * (foreground & MASK_RED_BLUE) + inv_alpha * (background & MASK_RED_BLUE)) >> 8;
+            const auto g =
+                    (alpha * (foreground & MASK_GREEN) + inv_alpha * (background & MASK_GREEN)) >> 8;
+
+            return (rb & MASK_RED_BLUE) | (g & MASK_GREEN) | (~0 & MASK_ALPHA);
+        }
     }
-
-
-    enum class PixelBlendMode {
-        OVERWRITE,
-        ALPHA_COMPOSITING,
-        FAST_ALPHA_COMPOSITING
-    };
 
 
     class Canvas final {
-        PixelBlendMode blend_mode{ PixelBlendMode::OVERWRITE };
+        color::BlendMode blend_mode{ color::BlendMode::OVERWRITE };
 
         void (* BlendPixelFn)(
                 Canvas &,
@@ -162,7 +182,7 @@ namespace cherry {
                 int width,
                 int height,
                 int stride,
-                PixelBlendMode mode = PixelBlendMode::OVERWRITE)
+                color::BlendMode mode = color::BlendMode::OVERWRITE)
                 :
                 Data(data),
                 DataUint8(reinterpret_cast<uint8_t *>(data)),
@@ -197,22 +217,22 @@ namespace cherry {
 
         [[nodiscard]]
         [[maybe_unused]]
-        inline auto BlendMode() const -> PixelBlendMode {
+        inline auto BlendMode() const -> color::BlendMode {
             return blend_mode;
         }
 
 
-        inline auto SetBlendMode(PixelBlendMode mode) -> Canvas & {
+        inline auto SetBlendMode(color::BlendMode mode) -> Canvas & {
             blend_mode = mode;
 
             switch (mode) {
-                case PixelBlendMode::OVERWRITE:
+                case color::BlendMode::OVERWRITE:
                     BlendPixelFn = BlendOverwrite;
                     break;
-                case PixelBlendMode::ALPHA_COMPOSITING:
+                case color::BlendMode::ALPHA_COMPOSITING:
                     BlendPixelFn = BlendAlpha;
                     break;
-                case PixelBlendMode::FAST_ALPHA_COMPOSITING:
+                case color::BlendMode::FAST_ALPHA_COMPOSITING:
                     BlendPixelFn = BlendFastAlpha;
                     break;
             }
@@ -227,7 +247,7 @@ namespace cherry {
                 int y0,
                 int x1,
                 int y1) const -> Canvas {
-            SortTopLeft(x0, y0, x1, y1);
+            utility::SortTopLeft(x0, y0, x1, y1);
 
             CheckBounds(x0, y0);
             CheckBounds(x1 - 1, y1 - 1);
@@ -340,7 +360,7 @@ namespace cherry {
                 int x,
                 int y,
                 uint32_t color) -> void {
-            canvas.OverwritePixel(x, y, AlphaBlend(color, canvas.Pixel(x, y)));
+            canvas.OverwritePixel(x, y, color::AlphaBlend(color, canvas.Pixel(x, y)));
         }
 
 
@@ -349,7 +369,7 @@ namespace cherry {
                 int x,
                 int y,
                 uint32_t color) -> void {
-            canvas.OverwritePixel(x, y, FastAlphaBlend(color, canvas.Pixel(x, y)));
+            canvas.OverwritePixel(x, y, color::FastAlphaBlend(color, canvas.Pixel(x, y)));
         }
     };
 
@@ -403,7 +423,7 @@ namespace cherry {
             const auto mirrored_x = left > right;
             const auto mirrored_y = top > bottom;
 
-            SortTopLeft(left, top, right, bottom);
+            utility::SortTopLeft(left, top, right, bottom);
 
             const auto dst_start_y = std::max(top, 0);
             const auto dst_end_y = std::min(bottom, dst.Height);
@@ -475,7 +495,7 @@ namespace cherry {
 
                     dst.BlendPixel(
                             x2, y2,
-                            src.IsWithinBounds(x1, y1) ? src.Pixel(x1, y1) : CombineRGBA(0xFF, 0xFF, 0xFF, 0x00)
+                            src.IsWithinBounds(x1, y1) ? src.Pixel(x1, y1) : color::FromRGBA(0xFF, 0xFF, 0xFF, 0x00)
                     );
                 }
             }
