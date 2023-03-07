@@ -235,7 +235,7 @@ auto TreeBenchmark(std::chrono::seconds benchmark_duration) -> void {
 
 
 auto Main([[maybe_unused]] const std::string & file_name) -> void {
-    TreeBenchmark(std::chrono::seconds{ 15 });
+    TreeBenchmark(std::chrono::seconds{ 60 });
 }
 
 
