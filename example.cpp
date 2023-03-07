@@ -12,9 +12,10 @@
 #include "cherry.hpp"
 
 
+template<cherry::TBlendFn SrcBlendFn, cherry::TBlendFn DstBlendFn>
 auto FunkyTree(
-        cherry::Canvas & canvas,
-        const cherry::Canvas & tree,
+        cherry::Canvas<DstBlendFn> & canvas,
+        const cherry::Canvas<SrcBlendFn> & tree,
         double time_s) -> void {
     const auto left = canvas.Width / 2;
     const auto top = canvas.Height / 2;
@@ -33,19 +34,19 @@ auto FunkyTree(
 }
 
 
-auto Gradient(cherry::Canvas & canvas) -> cherry::Canvas & {
+template<cherry::TBlendFn BlendFn>
+auto Gradient(cherry::Canvas<BlendFn> & canvas) -> void {
     for (auto y = decltype(canvas.Height){ 0 }; y < canvas.Height; y += 1) {
         for (auto x = decltype(canvas.Width){ 0 }; x < canvas.Width; x += 1) {
             const auto t = static_cast<uint8_t>((255.0 * (x + y)) / (canvas.Width + canvas.Height));
             canvas.BlendPixel(x, y, cherry::color::FromRGBA(t, 128 - t / 2, 192, 192));
         }
     }
-
-    return canvas;
 }
 
 
-auto CheckeredBackground(cherry::Canvas & canvas) -> cherry::Canvas & {
+template<cherry::TBlendFn BlendFn>
+auto CheckeredBackground(cherry::Canvas<BlendFn> & canvas) -> void {
     const auto white = cherry::color::FromRGBA(255, 255, 255, 128);
     const auto gray = cherry::color::FromRGBA(192, 192, 192, 128);
 
@@ -54,8 +55,6 @@ auto CheckeredBackground(cherry::Canvas & canvas) -> cherry::Canvas & {
             canvas.BlendPixel(x, y, (x / 25 + y / 25) % 2 ? white : gray);
         }
     }
-
-    return canvas;
 }
 
 
@@ -75,13 +74,12 @@ auto TreeBenchmark(std::chrono::seconds benchmark_duration) -> void {
     auto window = sf::RenderWindow({ width, height }, "Funky Tree Benchmark");
 
     auto background_data = cherry::utility::PixelBuffer(width, height, cherry::color::FromRGBA(0, 0, 0, 255));
-    auto background = cherry::Canvas(background_data.data(), width, height);
-    CheckeredBackground(background.SetBlendMode(cherry::color::BlendMode::FAST_ALPHA_COMPOSITING));
-    Gradient(background.SetBlendMode(cherry::color::BlendMode::FAST_ALPHA_COMPOSITING));
+    auto background = cherry::Canvas<cherry::color::FastAlphaBlend>(background_data.data(), width, height);
+    CheckeredBackground(background);
+    Gradient(background);
 
     auto canvas_data = cherry::utility::PixelBuffer(width, height);
-    auto canvas = cherry::Canvas(canvas_data.data(), width, height)
-            .SetBlendMode(cherry::color::BlendMode::ALPHA_COMPOSITING);
+    auto canvas = cherry::Canvas<cherry::color::FastAlphaBlend>(canvas_data.data(), width, height);
 
     auto img = sf::Image();
     img.loadFromFile(std::string("../blue_tree.bmp"));
@@ -134,7 +132,7 @@ auto TreeBenchmark(std::chrono::seconds benchmark_duration) -> void {
 
         cherry::transform::Copy(
                 background,
-                canvas.SetBlendMode(cherry::color::BlendMode::OVERWRITE),
+                canvas,
                 0,
                 0,
                 canvas.Width,
@@ -144,14 +142,14 @@ auto TreeBenchmark(std::chrono::seconds benchmark_duration) -> void {
         const auto t = Elapsed<std::chrono::milliseconds, double>(benchmark_start) / 1000.0;
         cherry::transform::Rotate(
                 blue_tree,
-                canvas.SetBlendMode(cherry::color::BlendMode::FAST_ALPHA_COMPOSITING),
+                canvas,
                 blue_tree.Width / 2,
                 blue_tree.Height * 7 / 8,
                 canvas.Width / 2,
                 canvas.Height / 2,
                 t
         );
-        FunkyTree(canvas.SetBlendMode(cherry::color::BlendMode::FAST_ALPHA_COMPOSITING), red_tree, t * 2);
+        FunkyTree(canvas, red_tree, t * 2);
 
         const auto origin_x = canvas.Width / 2;
         const auto origin_y = canvas.Height / 2;
@@ -193,7 +191,7 @@ auto TreeBenchmark(std::chrono::seconds benchmark_duration) -> void {
         );
 
         cherry::drawing::FillTriangle(
-                canvas.SetBlendMode(cherry::color::BlendMode::FAST_ALPHA_COMPOSITING),
+                canvas,
                 50, 50,
                 150 + std::lround(400 * std::sin(t * 2)), 180 + std::lround(400 * std::cos(t * 2)),
                 400, 30,
