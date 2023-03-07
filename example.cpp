@@ -12,10 +12,10 @@
 #include "cherry.hpp"
 
 
-template<cherry::TBlendFn SrcBlendFn, cherry::TBlendFn DstBlendFn>
+template<cherry::TBlendFn BlendFn>
 auto FunkyTree(
-        cherry::Canvas<DstBlendFn> & canvas,
-        const cherry::Canvas<SrcBlendFn> & tree,
+        cherry::Canvas & canvas,
+        const cherry::Canvas & tree,
         double time_s) -> void {
     const auto left = canvas.Width / 2;
     const auto top = canvas.Height / 2;
@@ -23,7 +23,7 @@ auto FunkyTree(
     const auto left_offset = canvas.Width;
     const auto top_offset = canvas.Height;
 
-    cherry::transform::Copy(
+    cherry::transform::Copy<BlendFn>(
             tree,
             canvas,
             left,
@@ -35,24 +35,24 @@ auto FunkyTree(
 
 
 template<cherry::TBlendFn BlendFn>
-auto Gradient(cherry::Canvas<BlendFn> & canvas) -> void {
+auto Gradient(cherry::Canvas & canvas) -> void {
     for (auto y = decltype(canvas.Height){ 0 }; y < canvas.Height; y += 1) {
         for (auto x = decltype(canvas.Width){ 0 }; x < canvas.Width; x += 1) {
             const auto t = static_cast<uint8_t>((255.0 * (x + y)) / (canvas.Width + canvas.Height));
-            canvas.BlendPixel(x, y, cherry::color::FromRGBA(t, 128 - t / 2, 192, 192));
+            canvas.BlendPixel<BlendFn>(x, y, cherry::color::FromRGBA(t, 128 - t / 2, 192, 192));
         }
     }
 }
 
 
 template<cherry::TBlendFn BlendFn>
-auto CheckeredBackground(cherry::Canvas<BlendFn> & canvas) -> void {
+auto CheckeredBackground(cherry::Canvas & canvas) -> void {
     const auto white = cherry::color::FromRGBA(255, 255, 255, 128);
     const auto gray = cherry::color::FromRGBA(192, 192, 192, 128);
 
     for (auto y = decltype(canvas.Height){ 0 }; y < canvas.Height; y += 1) {
         for (auto x = decltype(canvas.Width){ 0 }; x < canvas.Width; x += 1) {
-            canvas.BlendPixel(x, y, (x / 25 + y / 25) % 2 ? white : gray);
+            canvas.BlendPixel<BlendFn>(x, y, (x / 25 + y / 25) % 2 ? white : gray);
         }
     }
 }
@@ -74,12 +74,12 @@ auto TreeBenchmark(std::chrono::seconds benchmark_duration) -> void {
     auto window = sf::RenderWindow({ width, height }, "Funky Tree Benchmark");
 
     auto background_data = cherry::utility::PixelBuffer(width, height, cherry::color::FromRGBA(0, 0, 0, 255));
-    auto background = cherry::Canvas<cherry::color::FastAlphaBlend>(background_data.data(), width, height);
-    CheckeredBackground(background);
-    Gradient(background);
+    auto background = cherry::Canvas(background_data.data(), width, height);
+    CheckeredBackground<cherry::color::OverwriteBlend>(background);
+    Gradient<cherry::color::FastAlphaBlend>(background);
 
     auto canvas_data = cherry::utility::PixelBuffer(width, height);
-    auto canvas = cherry::Canvas<cherry::color::FastAlphaBlend>(canvas_data.data(), width, height);
+    auto canvas = cherry::Canvas(canvas_data.data(), width, height);
 
     auto img = sf::Image();
     img.loadFromFile(std::string("../blue_tree.bmp"));
@@ -130,7 +130,7 @@ auto TreeBenchmark(std::chrono::seconds benchmark_duration) -> void {
             break;
         }
 
-        cherry::transform::Copy(
+        cherry::transform::Copy<cherry::color::OverwriteBlend>(
                 background,
                 canvas,
                 0,
@@ -140,7 +140,7 @@ auto TreeBenchmark(std::chrono::seconds benchmark_duration) -> void {
         );
 
         const auto t = Elapsed<std::chrono::milliseconds, double>(benchmark_start) / 1000.0;
-        cherry::transform::Rotate(
+        cherry::transform::Rotate<cherry::color::FastAlphaBlend>(
                 blue_tree,
                 canvas,
                 blue_tree.Width / 2,
@@ -149,14 +149,14 @@ auto TreeBenchmark(std::chrono::seconds benchmark_duration) -> void {
                 canvas.Height / 2,
                 t
         );
-        FunkyTree(canvas, red_tree, t * 2);
+        FunkyTree<cherry::color::FastAlphaBlend>(canvas, red_tree, t * 2);
 
         const auto origin_x = canvas.Width / 2;
         const auto origin_y = canvas.Height / 2;
         constexpr auto r = 70;
         constexpr auto Pi = 3.14159265358979323846;
 
-        cherry::drawing::Polygon(
+        cherry::drawing::Polygon<cherry::color::OverwriteBlend>(
                 canvas,
                 {
                         { origin_x + r * std::cos(t + 0 * Pi / 2), origin_y - r * std::sin(t + 0 * Pi / 2) },
@@ -167,7 +167,7 @@ auto TreeBenchmark(std::chrono::seconds benchmark_duration) -> void {
                 cherry::color::FromRGBA(0, 0, 0)
         );
 
-        cherry::drawing::Polygon(
+        cherry::drawing::Polygon<cherry::color::OverwriteBlend>(
                 canvas,
                 {
                         {
@@ -190,7 +190,7 @@ auto TreeBenchmark(std::chrono::seconds benchmark_duration) -> void {
                 cherry::color::FromRGBA(0, 0, 0)
         );
 
-        cherry::drawing::FillTriangle(
+        cherry::drawing::FillTriangle<cherry::color::FastAlphaBlend>(
                 canvas,
                 50, 50,
                 150 + std::lround(400 * std::sin(t * 2)), 180 + std::lround(400 * std::cos(t * 2)),

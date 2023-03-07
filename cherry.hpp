@@ -175,7 +175,6 @@ namespace cherry {
             uint32_t,
             uint32_t);
 
-    template<TBlendFn BlendPixelFn = color::OverwriteBlend>
     class Canvas final {
     public:
         uint32_t * const Data{ nullptr };
@@ -221,50 +220,6 @@ namespace cherry {
                 Canvas(data, width, height, width) {}
 
 
-        template<TBlendFn NewBlendFn>
-        [[nodiscard]]
-        inline auto WithBlendMode() -> Canvas<NewBlendFn> {
-            return {
-                    Data,
-                    Width,
-                    Height,
-                    Stride
-            };
-        }
-
-
-        [[nodiscard]]
-        inline auto SubCanvas(
-                int x0,
-                int y0,
-                int x1,
-                int y1) const -> Canvas {
-            utility::SortTopLeft(x0, y0, x1, y1);
-
-            CheckBounds(x0, y0);
-            CheckBounds(x1 - 1, y1 - 1);
-
-            return Canvas{
-                    Data + Stride * y0 + x0,
-                    x1 - x0,
-                    y1 - y0,
-                    Stride
-            };
-        }
-
-
-        inline auto BlendPixel(
-                int x,
-                int y,
-                uint32_t pixel) -> Canvas & {
-            CheckBounds(x, y);
-
-            OverwritePixel(x, y, BlendPixelFn(pixel, Pixel(x, y)));
-
-            return *this;
-        }
-
-
         inline auto OverwritePixel(
                 int x,
                 int y,
@@ -277,6 +232,19 @@ namespace cherry {
         }
 
 
+        template<TBlendFn BlendFn>
+        inline auto BlendPixel(
+                int x,
+                int y,
+                uint32_t pixel) -> Canvas & {
+            CheckBounds(x, y);
+
+            Data[Stride * y + x] = BlendFn(pixel, Data[Stride * y + x]);
+
+            return *this;
+        }
+
+
         [[nodiscard]]
         inline auto Pixel(
                 int x,
@@ -284,17 +252,6 @@ namespace cherry {
             CheckBounds(x, y);
 
             return Data[Stride * y + x];
-        }
-
-
-        inline auto Fill(uint32_t color) -> Canvas & {
-            for (auto y = decltype(Height){ 0 }; y < Height; y += 1) {
-                for (auto x = decltype(Width){ 0 }; x < Width; x += 1) {
-                    BlendPixel(x, y, color);
-                }
-            }
-
-            return *this;
         }
 
 
@@ -369,11 +326,11 @@ namespace cherry {
         }
 
 
-        template<TBlendFn SrcBlendFn, TBlendFn DstBlendFn>
+        template<TBlendFn BlendFn>
         [[maybe_unused]]
         inline auto Copy(
-                const Canvas<SrcBlendFn> & src,
-                Canvas<DstBlendFn> & dst,
+                const Canvas & src,
+                Canvas & dst,
                 int left,
                 int top,
                 int right,
@@ -408,7 +365,7 @@ namespace cherry {
                         src_x = src.Width - 1 - src_x;
                     }
 
-                    dst.BlendPixel(dst_x, dst_y, src.Pixel(src_x, src_y));
+                    dst.OverwritePixel(dst_x, dst_y, BlendFn(src.Pixel(src_x, src_y), dst.Pixel(dst_x, dst_y)));
                 }
             }
 
@@ -416,11 +373,11 @@ namespace cherry {
         }
 
 
-        template<TBlendFn SrcBlendFn, TBlendFn DstBlendFn>
+        template<TBlendFn BlendFn>
         [[maybe_unused]]
         inline auto Rotate(
-                const Canvas<SrcBlendFn> & src,
-                Canvas<DstBlendFn> & dst,
+                const Canvas & src,
+                Canvas & dst,
                 int src_origin_x,
                 int src_origin_y,
                 int dst_origin_x,
@@ -459,10 +416,10 @@ namespace cherry {
                     x1 += src_origin_x;
                     y1 += src_origin_y;
 
-                    dst.BlendPixel(
-                            x2, y2,
-                            src.IsWithinBounds(x1, y1) ? src.Pixel(x1, y1) : color::FromRGBA(0xFF, 0xFF, 0xFF, 0x00)
-                    );
+                    const auto src_color =
+                            src.IsWithinBounds(x1, y1) ? src.Pixel(x1, y1) : color::FromRGBA(0xFF, 0xFF, 0xFF, 0x00);
+
+                    dst.OverwritePixel(x2, y2, BlendFn(src_color, dst.Pixel(x2, y2)));
                 }
             }
 
@@ -474,7 +431,7 @@ namespace cherry {
     namespace drawing {
         template<TBlendFn BlendFn>
         inline auto LineLow(
-                Canvas<BlendFn> & canvas,
+                Canvas & canvas,
                 int x0,
                 int y0,
                 int x1,
@@ -487,7 +444,7 @@ namespace cherry {
             auto y = y0;
 
             for (auto x = x0; x <= x1; x += 1) {
-                canvas.BlendPixel(x, y, color);
+                canvas.OverwritePixel(x, y, BlendFn(color, canvas.Pixel(x, y)));
 
                 if (D > 0) {
                     y += yi;
@@ -502,7 +459,7 @@ namespace cherry {
 
         template<TBlendFn BlendFn>
         inline auto LineHigh(
-                Canvas<BlendFn> & canvas,
+                Canvas & canvas,
                 int x0,
                 int y0,
                 int x1,
@@ -515,7 +472,7 @@ namespace cherry {
             auto x = x0;
 
             for (auto y = y0; y <= y1; y += 1) {
-                canvas.BlendPixel(x, y, color);
+                canvas.OverwritePixel(x, y, BlendFn(color, canvas.Pixel(x, y)));
 
                 if (D > 0) {
                     x += xi;
@@ -531,7 +488,7 @@ namespace cherry {
         template<TBlendFn BlendFn>
         [[maybe_unused]]
         inline auto Line(
-                Canvas<BlendFn> & canvas,
+                Canvas & canvas,
                 int x0,
                 int y0,
                 int x1,
@@ -539,36 +496,21 @@ namespace cherry {
                 uint32_t color) -> decltype(canvas) {
             if (std::abs(y1 - y0) < std::abs(x1 - x0)) {
                 if (x0 > x1) {
-                    LineLow(canvas, x1, y1, x0, y0, color);
+                    LineLow<BlendFn>(canvas, x1, y1, x0, y0, color);
                 }
                 else {
-                    LineLow(canvas, x0, y0, x1, y1, color);
+                    LineLow<BlendFn>(canvas, x0, y0, x1, y1, color);
                 }
             }
             else {
                 if (y0 > y1) {
-                    LineHigh(canvas, x1, y1, x0, y0, color);
+                    LineHigh<BlendFn>(canvas, x1, y1, x0, y0, color);
                 }
                 else {
-                    LineHigh(canvas, x0, y0, x1, y1, color);
+                    LineHigh<BlendFn>(canvas, x0, y0, x1, y1, color);
                 }
             }
 
-
-            return canvas;
-        }
-
-
-        template<TBlendFn BlendFn>
-        [[maybe_unused]]
-        inline auto FillRectangle(
-                Canvas<BlendFn> & canvas,
-                int left,
-                int top,
-                int right,
-                int bottom,
-                uint32_t color) -> decltype(canvas) {
-            canvas.SubCanvas(left, top, right, bottom).Fill(color);
 
             return canvas;
         }
@@ -577,7 +519,7 @@ namespace cherry {
         template<TBlendFn BlendFn>
         [[maybe_unused]]
         inline auto Polygon(
-                Canvas<BlendFn> & canvas,
+                Canvas & canvas,
                 const std::vector<std::pair<int, int>> & vertices,
                 uint32_t color) -> decltype(canvas) {
             if (vertices.empty()) {
@@ -588,7 +530,7 @@ namespace cherry {
                 const auto[x0, y0] = vertices[i % vertices.size()];
                 const auto[x1, y1] = vertices[(i + 1) % vertices.size()];
 
-                Line(canvas, x0, y0, x1, y1, color);
+                Line<BlendFn>(canvas, x0, y0, x1, y1, color);
             }
 
             return canvas;
@@ -597,7 +539,7 @@ namespace cherry {
 
         template<TBlendFn BlendFn>
         inline auto FillFlatTriangle(
-                Canvas<BlendFn> & canvas,
+                Canvas & canvas,
                 int x0,
                 int y0,
                 int x1,
@@ -622,7 +564,7 @@ namespace cherry {
                 const auto x_right = x0 + (y - y0) * (x2 - x0) / (y1 - y0);
 
                 for (auto x = std::max<int>(0, x_left); x < std::min<int>(canvas.Width, x_right + 1); x += 1) {
-                    canvas.BlendPixel(x, y, color);
+                    canvas.OverwritePixel(x, y, BlendFn(color, canvas.Pixel(x, y)));
                 }
             }
             return canvas;
@@ -632,7 +574,7 @@ namespace cherry {
         template<TBlendFn BlendFn>
         [[maybe_unused]]
         inline auto FillTriangle(
-                Canvas<BlendFn> & canvas,
+                Canvas & canvas,
                 int x0,
                 int y0,
                 int x1,
@@ -656,13 +598,13 @@ namespace cherry {
             }
 
             if (y1 == y2) {
-                return FillFlatTriangle(canvas, x0, y0, x1, y1, x2, color);
+                return FillFlatTriangle<BlendFn>(canvas, x0, y0, x1, y1, x2, color);
             }
 
             const auto x_intermediate = x0 + (y1 - y0) * (x2 - x0) / (y2 - y0);
 
-            FillFlatTriangle(canvas, x0, y0, x1, y1, x_intermediate, color);
-            FillFlatTriangle(canvas, x2, y2, x1, y1 + 1, x_intermediate, color);
+            FillFlatTriangle<BlendFn>(canvas, x0, y0, x1, y1, x_intermediate, color);
+            FillFlatTriangle<BlendFn>(canvas, x2, y2, x1, y1 + 1, x_intermediate, color);
 
             return canvas;
         }
