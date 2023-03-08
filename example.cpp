@@ -137,7 +137,7 @@ auto TreeBenchmark(std::chrono::seconds benchmark_duration) -> void {
         );
 
         const auto t = Elapsed<std::chrono::milliseconds, double>(benchmark_start) / 1000.0;
-        cherry::transform::Rotate<cherry::color::FastAlphaBlend>(
+        cherry::transform::Copy<cherry::color::FastAlphaBlend>(
                 blue_tree,
                 canvas,
                 blue_tree.Width / 2,

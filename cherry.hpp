@@ -277,32 +277,12 @@ namespace cherry {
 
     namespace transform {
         [[nodiscard]]
-        constexpr inline auto ApplyRotationX(
-                int x,
-                int y,
-                double sin,
-                double cos) -> int {
-            return std::lround(cos * x + sin * y);
-        }
-
-
-        [[nodiscard]]
-        constexpr inline auto ApplyRotationY(
-                int x,
-                int y,
-                double sin,
-                double cos) -> int {
-            return std::lround(-sin * x + cos * y);
-        }
-
-
-        [[nodiscard]]
         constexpr inline auto ApplyRotation(
                 int x,
                 int y,
                 double sin,
                 double cos) -> std::pair<int, int> {
-            return { ApplyRotationX(x, y, sin, cos), ApplyRotationY(x, y, sin, cos) };
+            return { std::lround(cos * x + sin * y), std::lround(-sin * x + cos * y) };
         }
 
 
@@ -355,7 +335,7 @@ namespace cherry {
 
         template<color::BlendType BlendFn>
         [[maybe_unused]]
-        inline auto Rotate(
+        inline auto Copy(
                 const Canvas & src,
                 Canvas & dst,
                 int src_origin_x,
