@@ -67,6 +67,53 @@ namespace cherry {
                 std::swap(y0, y1);
             }
         }
+
+
+        class Fixed final {
+            static constexpr auto DIGITS = 8;
+
+            int repr;
+        public:
+            [[maybe_unused]]
+            explicit constexpr Fixed(float value) :
+                    repr(static_cast<int>(value * (1 << DIGITS))) {}
+
+
+            [[maybe_unused]]
+            explicit constexpr Fixed(double value) :
+                    repr(static_cast<int>(value * (1 << DIGITS))) {}
+
+
+            [[nodiscard]]
+            inline auto operator*(int value) const -> int {
+                return (value * repr) >> DIGITS;
+            }
+
+
+            friend auto operator/(
+                    int a,
+                    Fixed b) -> int;
+
+            friend auto operator*(
+                    int a,
+                    Fixed b) -> int;
+        };
+
+
+        [[nodiscard]]
+        inline auto operator/(
+                int a,
+                Fixed b) -> int {
+            return (a << Fixed::DIGITS) / b.repr;
+        }
+
+
+        [[nodiscard]]
+        inline auto operator*(
+                int a,
+                Fixed b) -> int {
+            return (a * b.repr) >> Fixed::DIGITS;
+        }
     }
 
 
@@ -166,6 +213,7 @@ namespace cherry {
 
         using BlendType = decltype(Overwrite);
     }
+
 
     class Canvas final {
     public:
@@ -276,13 +324,19 @@ namespace cherry {
 
 
     namespace transform {
+        using FixedPoint = utility::Fixed;
+
+
         [[nodiscard]]
         constexpr inline auto ApplyRotation(
                 int x,
                 int y,
-                double sin,
-                double cos) -> std::pair<int, int> {
-            return { std::lround(cos * x + sin * y), std::lround(-sin * x + cos * y) };
+                float sin,
+                float cos) -> std::pair<int, int> {
+            return {
+                    std::lround(cos * static_cast<float>(x) + sin * static_cast<float>(y)),
+                    std::lround(-sin * static_cast<float>(x) + cos * static_cast<float>(y))
+            };
         }
 
 
@@ -291,41 +345,41 @@ namespace cherry {
         inline auto Copy(
                 const Canvas & src,
                 Canvas & dst,
-                int left,
-                int top,
-                int right,
-                int bottom) -> decltype(dst) {
+                int x0,
+                int y0,
+                int x1,
+                int y1) -> decltype(dst) {
             if (src.Empty) {
                 return dst;
             }
 
-            const auto target_width = std::abs(left - right);
-            const auto target_height = std::abs(top - bottom);
+            const auto target_width = std::abs(x0 - x1);
+            const auto target_height = std::abs(y0 - y1);
 
-            const auto mirrored_x = left > right;
-            const auto mirrored_y = top > bottom;
+            const auto mirrored_x = x0 > x1;
+            const auto mirrored_y = y0 > y1;
 
-            utility::SortTopLeft(left, top, right, bottom);
+            utility::SortTopLeft(x0, y0, x1, y1);
 
-            const auto dst_start_y = std::max(top, 0);
-            const auto dst_end_y = std::min(bottom, dst.Height);
+            const auto dst_start_y = std::max(y0, 0);
+            const auto dst_end_y = std::min(y1, dst.Height);
 
-            const auto dst_start_x = std::max(left, 0);
-            const auto dst_end_x = std::min(right, dst.Width);
+            const auto dst_start_x = std::max(x0, 0);
+            const auto dst_end_x = std::min(x1, dst.Width);
 
-            for (auto dst_y = dst_start_y; dst_y < dst_end_y; dst_y += 1) {
-                auto src_y = (dst_y - top) * src.Height / target_height;
+            for (auto y = dst_start_y; y < dst_end_y; y += 1) {
+                auto v = (y - y0) * src.Height / target_height;
                 if (mirrored_y) {
-                    src_y = src.Height - 1 - src_y;
+                    v = src.Height - 1 - v;
                 }
 
-                for (auto dst_x = dst_start_x; dst_x < dst_end_x; dst_x += 1) {
-                    auto src_x = (dst_x - left) * src.Width / target_width;
+                for (auto x = dst_start_x; x < dst_end_x; x += 1) {
+                    auto u = (x - x0) * src.Width / target_width;
                     if (mirrored_x) {
-                        src_x = src.Width - 1 - src_x;
+                        u = src.Width - 1 - u;
                     }
 
-                    dst.BlendPixel<BlendFn>(dst_x, dst_y, src.Pixel(src_x, src_y));
+                    dst.BlendPixel<BlendFn>(x, y, src.Pixel(u, v));
                 }
             }
 
@@ -338,16 +392,16 @@ namespace cherry {
         inline auto Copy(
                 const Canvas & src,
                 Canvas & dst,
-                int src_origin_x,
-                int src_origin_y,
-                int dst_origin_x,
-                int dst_origin_y,
-                double radians) -> decltype(dst) {
-            const auto sin = std::sin(radians);
-            const auto cos = std::cos(radians);
+                int x0,
+                int y0,
+                int u0,
+                int v0,
+                float rotation) -> decltype(dst) {
+            const auto sin = std::sin(rotation);
+            const auto cos = std::cos(rotation);
 
-            const auto src_left = -src_origin_x;
-            const auto src_top = -src_origin_y;
+            const auto src_left = -u0;
+            const auto src_top = -v0;
             const auto src_right = src_left + src.Width;
             const auto src_bottom = src_top + src.Height;
 
@@ -357,12 +411,12 @@ namespace cherry {
             const auto[dx, dy] = ApplyRotation(src_left, src_bottom, sin, cos);
 
             auto[min_x, max_x] = std::minmax({ ax, bx, cx, dx });
-            min_x += dst_origin_x;
-            max_x += dst_origin_x;
+            min_x += x0;
+            max_x += x0;
 
             auto[min_y, max_y] = std::minmax({ ay, by, cy, dy });
-            min_y += dst_origin_y;
-            max_y += dst_origin_y;
+            min_y += y0;
+            max_y += y0;
 
             const auto start_y = std::max(min_y, 0);
             const auto end_y = std::min(max_y, dst.Height);
@@ -370,20 +424,130 @@ namespace cherry {
             const auto start_x = std::max(min_x, 0);
             const auto end_x = std::min(max_x, dst.Width);
 
-            for (auto y2 = start_y; y2 < end_y; y2 += 1) {
-                for (auto x2 = start_x; x2 < end_x; x2 += 1) {
-                    auto[x1, y1] = ApplyRotation(x2 - dst_origin_x, y2 - dst_origin_y, -sin, cos);
-                    x1 += src_origin_x;
-                    y1 += src_origin_y;
+            constexpr auto transparent = color::FromRGBA(0xFF, 0xFF, 0xFF, 0x00);
 
-                    const auto src_color =
-                            src.IsWithinBounds(x1, y1) ? src.Pixel(x1, y1) : color::FromRGBA(0xFF, 0xFF, 0xFF, 0x00);
+            for (auto y = start_y; y < end_y; y += 1) {
+                for (auto x = start_x; x < end_x; x += 1) {
+                    auto[u, v] = ApplyRotation(x - x0, y - y0, -sin, cos);
+                    u += u0;
+                    v += v0;
 
-                    dst.BlendPixel<BlendFn>(x2, y2, src_color);
+                    dst.BlendPixel<BlendFn>(x, y, src.IsWithinBounds(u, v) ? src.Pixel(u, v) : transparent);
                 }
             }
 
             return dst;
+        }
+
+
+        template<color::BlendType BlendFn>
+        [[maybe_unused]]
+        inline auto Copy(
+                const Canvas & src,
+                Canvas & dst,
+                int x0,
+                int y0,
+                int u0,
+                int v0,
+                float rotation,
+                FixedPoint scale_x,
+                FixedPoint scale_y) -> decltype(dst) {
+            const auto sin = std::sin(rotation);
+            const auto cos = std::cos(rotation);
+
+            const auto src_left = -u0 * scale_x;
+            const auto src_top = -v0 * scale_y;
+            const auto src_right = src_left + src.Width * scale_x;
+            const auto src_bottom = src_top + src.Height * scale_y;
+
+            const auto[ax, ay] = ApplyRotation(src_left, src_top, sin, cos);
+            const auto[bx, by] = ApplyRotation(src_right, src_top, sin, cos);
+            const auto[cx, cy] = ApplyRotation(src_right, src_bottom, sin, cos);
+            const auto[dx, dy] = ApplyRotation(src_left, src_bottom, sin, cos);
+
+            auto[min_x, max_x] = std::minmax({ ax, bx, cx, dx });
+            min_x += x0;
+            max_x += x0;
+
+            auto[min_y, max_y] = std::minmax({ ay, by, cy, dy });
+            min_y += y0;
+            max_y += y0;
+
+            const auto start_y = std::max(min_y, 0);
+            const auto end_y = std::min(max_y, dst.Height);
+
+            const auto start_x = std::max(min_x, 0);
+            const auto end_x = std::min(max_x, dst.Width);
+
+            constexpr auto transparent = color::FromRGBA(0xFF, 0xFF, 0xFF, 0x00);
+
+            for (auto y = start_y; y < end_y; y += 1) {
+                for (auto x = start_x; x < end_x; x += 1) {
+                    auto[u, v] = ApplyRotation(x - x0, y - y0, -sin, cos);
+
+                    u = u0 + u / scale_x;
+                    v = v0 + v / scale_y;
+
+                    dst.BlendPixel<BlendFn>(x, y, src.IsWithinBounds(u, v) ? src.Pixel(u, v) : transparent);
+                }
+            }
+
+            return dst;
+        }
+
+
+        struct Transform {
+            float RotationRadians{ 0.0f };
+
+            int OriginX{ 0 };
+            int OriginY{ 0 };
+
+            float ScaleX{ 1.0f };
+            float ScaleY{ 1.0f };
+        };
+
+
+        template<color::BlendType BlendFn>
+        [[maybe_unused]]
+        inline auto Copy(
+                const Canvas & src,
+                Canvas & dst,
+                int x0 = 0,
+                int y0 = 0,
+                const Transform & tf = {}) -> decltype(dst) {
+            if (0.0f == tf.RotationRadians) {
+                const auto scale_x = FixedPoint{ tf.ScaleX };
+                const auto scale_y = FixedPoint{ tf.ScaleY };
+
+                return Copy<BlendFn>(
+                        src,
+                        dst,
+                        x0 - tf.OriginX * scale_x,
+                        y0 - tf.OriginY * scale_y,
+                        x0 + (src.Width - tf.OriginX) * scale_x,
+                        y0 + (src.Height - tf.OriginY) * scale_y
+                );
+            }
+
+            if (1.0f == tf.ScaleX and 1.0f == tf.ScaleY) {
+                return Copy<BlendFn>(
+                        src,
+                        dst,
+                        x0, y0,
+                        tf.OriginX, tf.OriginY,
+                        tf.RotationRadians
+                );
+            }
+
+            return Copy<BlendFn>(
+                    src,
+                    dst,
+                    x0, y0,
+                    tf.OriginX, tf.OriginY,
+                    tf.RotationRadians,
+                    FixedPoint{ tf.ScaleX },
+                    FixedPoint{ tf.ScaleY }
+            );
         }
     }
 

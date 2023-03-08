@@ -3,6 +3,7 @@
 #include <string>
 #include <iostream>
 #include <chrono>
+#include <iomanip>
 
 #include "SFML/Graphics.hpp"
 
@@ -15,20 +16,19 @@
 auto FunkyTree(
         cherry::Canvas & canvas,
         const cherry::Canvas & tree,
-        double time_s) -> void {
+        float time_s) -> void {
     const auto left = canvas.Width / 2;
     const auto top = canvas.Height / 2;
-
-    const auto left_offset = canvas.Width;
-    const auto top_offset = canvas.Height;
 
     cherry::transform::Copy<cherry::color::FastAlphaBlend>(
             tree,
             canvas,
             left,
             top,
-            std::lround(left + std::cos(time_s) * left_offset),
-            std::lround(top + std::sin(time_s) * top_offset)
+            {
+                    .ScaleX = std::cos(time_s),
+                    .ScaleY = std::sin(time_s)
+            }
     );
 }
 
@@ -113,6 +113,8 @@ auto TreeBenchmark(std::chrono::seconds benchmark_duration) -> void {
     const auto benchmark_start = std::chrono::steady_clock::now();
     auto frames_rendered = 0;
 
+    auto render_time_ms = std::chrono::milliseconds{ 0 };
+
     while (window.isOpen()) {
         auto event = sf::Event{};
         while (window.pollEvent(event)) {
@@ -127,24 +129,23 @@ auto TreeBenchmark(std::chrono::seconds benchmark_duration) -> void {
             break;
         }
 
-        cherry::transform::Copy<cherry::color::Overwrite>(
-                background,
-                canvas,
-                0,
-                0,
-                canvas.Width,
-                canvas.Height
-        );
+        const auto render_begin = std::chrono::steady_clock::now();
 
-        const auto t = Elapsed<std::chrono::milliseconds, double>(benchmark_start) / 1000.0;
+        cherry::transform::Copy<cherry::color::Overwrite>(background, canvas);
+
+        const auto t = Elapsed<std::chrono::milliseconds, float>(benchmark_start) / 1000.0f;
         cherry::transform::Copy<cherry::color::FastAlphaBlend>(
                 blue_tree,
                 canvas,
-                blue_tree.Width / 2,
-                blue_tree.Height * 7 / 8,
                 canvas.Width / 2,
                 canvas.Height / 2,
-                t
+                {
+                        .RotationRadians = t,
+                        .OriginX = blue_tree.Width / 2,
+                        .OriginY = blue_tree.Height * 7 / 8,
+                        .ScaleX = 0.75f + 0.4f * std::sin(t),
+                        .ScaleY = 0.75f + 0.4f * std::sin(t)
+                }
         );
         FunkyTree(canvas, red_tree, t * 2);
 
@@ -195,6 +196,8 @@ auto TreeBenchmark(std::chrono::seconds benchmark_duration) -> void {
                 cherry::color::FromRGBA(192, 164, 255, 128)
         );
 
+        render_time_ms += Elapsed<std::chrono::milliseconds>(render_begin);
+
         texture.update(canvas.DataUint8);
 
         window.draw(sprite);
@@ -204,9 +207,14 @@ auto TreeBenchmark(std::chrono::seconds benchmark_duration) -> void {
     }
     const auto elapsed_ms_total = Elapsed<std::chrono::milliseconds, double>(benchmark_start);
 
+    std::cout << std::fixed << std::setprecision(1);
+
     std::cout << "FPS: "
               << frames_rendered / elapsed_ms_total * 1000
               << std::endl;
+    std::cout << "Frame time: "
+              << static_cast<double >(render_time_ms.count()) / frames_rendered
+              << "ms" << std::endl;
 }
 
 
