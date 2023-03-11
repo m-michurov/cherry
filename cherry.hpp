@@ -737,14 +737,19 @@ namespace cherry {
 
 
     namespace postprocessing {
-        struct Kernel {
+        struct Kernel2D {
+            const int Size;
+            const std::vector<float> Data;
+        };
+
+        struct Kernel1D {
             const int Size;
             const std::vector<float> Data;
         };
 
 
         [[maybe_unused]]
-        inline auto BlurKernel2D(int size) -> Kernel {
+        inline auto BlurKernel2D(int size) -> Kernel2D {
             if (size < 0) {
                 size = 0;
             }
@@ -756,7 +761,7 @@ namespace cherry {
 
 
         [[maybe_unused]]
-        inline auto BlurKernel1D(int size) -> Kernel {
+        inline auto BlurKernel1D(int size) -> Kernel1D {
             if (size < 0) {
                 size = 0;
             }
@@ -771,7 +776,7 @@ namespace cherry {
         inline auto Conv2D(
                 const Canvas & src,
                 Canvas & dst,
-                const Kernel & kernel) -> decltype(dst) {
+                const Kernel2D & kernel) -> decltype(dst) {
             for (auto y = 0; y < dst.Height; y += 1) {
                 for (auto x = 0; x < dst.Width; x += 1) {
                     auto r = 0.0f;
@@ -829,7 +834,7 @@ namespace cherry {
         inline auto Conv1DHorizontal(
                 const Canvas & src,
                 Canvas & dst,
-                const Kernel & kernel) -> decltype(dst) {
+                const Kernel1D & kernel) -> decltype(dst) {
             for (auto y = 0; y < dst.Height; y += 1) {
                 for (auto x = 0; x < dst.Width; x += 1) {
                     auto r = 0.0f;
@@ -886,7 +891,7 @@ namespace cherry {
         inline auto Conv1DVertical(
                 const Canvas & src,
                 Canvas & dst,
-                const Kernel & kernel) -> decltype(dst) {
+                const Kernel1D & kernel) -> decltype(dst) {
             for (auto y = 0; y < dst.Height; y += 1) {
                 for (auto x = 0; x < dst.Width; x += 1) {
                     auto r = 0.0f;
