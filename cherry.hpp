@@ -882,6 +882,63 @@ namespace cherry {
         }
 
 
+        [[maybe_unused]]
+        inline auto Conv1DVertical(
+                const Canvas & src,
+                Canvas & dst,
+                const Kernel & kernel) -> decltype(dst) {
+            for (auto y = 0; y < dst.Height; y += 1) {
+                for (auto x = 0; x < dst.Width; x += 1) {
+                    auto r = 0.0f;
+                    auto g = 0.0f;
+                    auto b = 0.0f;
+                    auto a = 0.0f;
+
+                    auto kernel_index = -1;
+                    auto processed_pixels = 0.0f;
+                    const auto u = x;
+                    for (auto v = y - kernel.Size / 2; v <= y + kernel.Size / 2; v += 1) {
+                        kernel_index += 1;
+
+                        if (not src.IsWithinBounds(u, v)) {
+                            continue;
+                        }
+
+                        processed_pixels += 1;
+
+                        const auto pixel = src.Pixel(u, v);
+                        const auto[r0, g0, b0, a0] = color::ToRGBA<float>(pixel);
+                        r += r0 * kernel.Data[kernel_index] * a0 / 255.0f;
+                        g += g0 * kernel.Data[kernel_index] * a0 / 255.0f;
+                        b += b0 * kernel.Data[kernel_index] * a0 / 255.0f;
+                        a += a0 * kernel.Data[kernel_index];
+                    }
+
+                    r /= processed_pixels;
+                    g /= processed_pixels;
+                    b /= processed_pixels;
+                    a /= processed_pixels;
+
+                    r *= 255.0f / a;
+                    g *= 255.0f / a;
+                    b *= 255.0f / a;
+
+                    dst.BlendPixel<color::Overwrite>(
+                            x, y,
+                            color::FromRGBA(
+                                    std::clamp<int>(static_cast<int>(r), 0, std::numeric_limits<uint8_t>::max()),
+                                    std::clamp<int>(static_cast<int>(g), 0, std::numeric_limits<uint8_t>::max()),
+                                    std::clamp<int>(static_cast<int>(b), 0, std::numeric_limits<uint8_t>::max()),
+                                    std::clamp<int>(static_cast<int>(a), 0, std::numeric_limits<uint8_t>::max())
+                            )
+                    );
+                }
+            }
+
+            return dst;
+        }
+
+
 #if 0
         [[maybe_unused]]
         inline auto GaussianBlur(
