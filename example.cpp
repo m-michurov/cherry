@@ -220,86 +220,83 @@ auto TreeBenchmark(std::chrono::seconds benchmark_duration) -> void {
 
 [[maybe_unused]]
 auto ConvDemo() -> void {
-    constexpr auto width = 640;
-    constexpr auto height = 480;
-
-    auto window = sf::RenderWindow({ width, height }, "Conv");
-
-    auto background_data = cherry::utility::PixelBuffer(width, height, cherry::color::FromRGBA(0, 0, 0, 255));
-    auto background = cherry::Canvas(background_data.data(), width, height);
-    CheckeredBackground(background);
-    Gradient(background);
-
-    auto canvas_data = cherry::utility::PixelBuffer(width, height);
-    auto canvas = cherry::Canvas(canvas_data.data(), width, height);
-
     auto img = sf::Image();
-    img.loadFromFile(std::string("../blue_tree.bmp"));
-    auto blue_tree_data = cherry::utility::PixelBuffer(
+    img.loadFromFile(std::string("../bloom_scene.bmp"));
+    auto input_data = cherry::utility::PixelBuffer(
             img.getPixelsPtr(),
             static_cast<int>(img.getSize().x),
             static_cast<int>(img.getSize().y)
     );
-    const auto tree = cherry::Canvas(
-            blue_tree_data.data(),
+    const auto input = cherry::Canvas(
+            input_data.data(),
             static_cast<int>(img.getSize().x),
             static_cast<int>(img.getSize().y)
     );
-    auto blurred_tree_data = cherry::utility::PixelBuffer(tree.Width, tree.Height);
-    auto blurred_tree = cherry::Canvas(
-            blurred_tree_data.data(),
-            tree.Width,
-            tree.Height
+    const auto width = input.Width;
+    const auto height = input.Height;
+
+    auto window = sf::RenderWindow(
+            { static_cast<unsigned int>(width * 2), static_cast<unsigned int>(height) }, "Bloom"
     );
+
+    auto buffer1_data = cherry::utility::PixelBuffer(width, height);
+    auto buffer1 = cherry::Canvas(buffer1_data.data(), width, height);
+
+    auto buffer2_data = cherry::utility::PixelBuffer(width, height);
+    auto buffer2 = cherry::Canvas(buffer2_data.data(), width, height);
+
+    auto bloom_data = cherry::utility::PixelBuffer(width, height);
+    auto bloom_image = cherry::Canvas(bloom_data.data(), width, height);
+
+    auto canvas_data = cherry::utility::PixelBuffer(width * 2, height, cherry::color::FromRGBA(0xFF, 0xFF, 0xFF, 0xFF));
+    auto canvas = cherry::Canvas(canvas_data.data(), width * 2, height);
+
+    std::cout << std::fixed << std::setprecision(1);
+
+    const auto render_begin = std::chrono::steady_clock::now();
+
+//    cherry::postprocessing::FilterByBrightness(input, buffer1, 0.75f, cherry::color::FromRGBA(0, 0, 0, 255));
+//    cherry::postprocessing::Conv2D(buffer1, buffer2, cherry::postprocessing::GaussKernel2D(32));
+//    cherry::drawing::Fill(canvas, 0x0);
+//    cherry::transform::Copy<cherry::color::Overwrite>(input, canvas, width);
+//    cherry::transform::Copy<cherry::color::Add>(buffer2, canvas, width);
+
+    cherry::postprocessing::Bloom<cherry::postprocessing::MaxChannel>(
+            input,
+            buffer1,
+            buffer2,
+            bloom_image,
+            cherry::postprocessing::GaussKernel2D(24),
+            0.85f
+    );
+    cherry::transform::Copy<cherry::color::Overwrite>(bloom_image, canvas, width);
+    cherry::transform::Copy<cherry::color::Overwrite>(input, canvas);
+
+    const auto render_time_ms = Elapsed<std::chrono::milliseconds>(render_begin);
+    std::cout << "Render time: "
+              << static_cast<double >(render_time_ms.count())
+              << "ms" << std::endl;
 
     auto texture = sf::Texture();
     texture.create(canvas.Width, canvas.Height);
+    texture.update(canvas.DataUint8);
+    texture.copyToImage().saveToFile("../result.bmp");
 
     auto sprite = sf::Sprite();
     sprite.setTexture(texture);
-
-    const auto blur_kernel = cherry::postprocessing::BlurKernel1D(9);
-
-    const auto benchmark_start = std::chrono::steady_clock::now();
-    auto frames_rendered = 0;
-
-    auto render_time_ms = std::chrono::milliseconds{ 0 };
 
     while (window.isOpen()) {
         auto event = sf::Event{};
         while (window.pollEvent(event)) {
             if (sf::Event::Closed == event.type) {
                 window.close();
-
-                const auto elapsed_ms_total = Elapsed<std::chrono::milliseconds, double>(benchmark_start);
-
-                std::cout << std::fixed << std::setprecision(1);
-
-                std::cout << "FPS: "
-                          << frames_rendered / elapsed_ms_total * 1000
-                          << std::endl;
-                std::cout << "Frame time: "
-                          << static_cast<double >(render_time_ms.count()) / frames_rendered
-                          << "ms" << std::endl;
             }
         }
-
-        const auto render_begin = std::chrono::steady_clock::now();
-
-        cherry::postprocessing::Conv1DHorizontal(tree, blurred_tree, blur_kernel);
-//        cherry::postprocessing::Conv2D(background, canvas, blur_kernel);
-
-        cherry::transform::Copy<cherry::color::Overwrite>(background, canvas);
-        cherry::transform::Copy<cherry::color::FastAlphaBlend>(blurred_tree, canvas);
-
-        render_time_ms += Elapsed<std::chrono::milliseconds>(render_begin);
 
         texture.update(canvas.DataUint8);
 
         window.draw(sprite);
-
         window.display();
-        frames_rendered += 1;
     }
 }
 

@@ -154,10 +154,10 @@ namespace cherry {
         constexpr inline auto ToRGBA(
                 uint32_t pixel) -> std::tuple<T, T, T, T> {
             return {
-                    (pixel >> SHIFT_RED) & 0xFF,
-                    (pixel >> SHIFT_GREEN) & 0xFF,
-                    (pixel >> SHIFT_BLUE) & 0xFF,
-                    (pixel >> SHIFT_ALPHA) & 0xFF,
+                    static_cast<T>((pixel >> SHIFT_RED) & 0xFF),
+                    static_cast<T>((pixel >> SHIFT_GREEN) & 0xFF),
+                    static_cast<T>((pixel >> SHIFT_BLUE) & 0xFF),
+                    static_cast<T>((pixel >> SHIFT_ALPHA) & 0xFF),
             };
         }
 
@@ -183,6 +183,40 @@ namespace cherry {
             const auto r = (fg_r * fg_a + bg_r * bg_a * (255 - fg_a) / 255) / a;
             const auto g = (fg_g * fg_a + bg_g * bg_a * (255 - fg_a) / 255) / a;
             const auto b = (fg_b * fg_a + bg_b * bg_a * (255 - fg_a) / 255) / a;
+
+            return FromRGBA(r, g, b, a);
+        }
+
+
+        [[maybe_unused]]
+        [[nodiscard]]
+        inline auto AlphaWeightedAdd(
+                uint32_t foreground,
+                uint32_t background) -> uint32_t {
+            const auto[fg_r, fg_g, fg_b, fg_a] = ToRGBA(foreground);
+            const auto[bg_r, bg_g, bg_b, bg_a] = ToRGBA(background);
+
+            const auto r = std::clamp(fg_r * fg_a / 255 + bg_r, 0, 0xFF);
+            const auto g = std::clamp(fg_g * fg_a / 255 + bg_g, 0, 0xFF);
+            const auto b = std::clamp(fg_b * fg_a / 255 + bg_b, 0, 0xFF);
+            const auto a = bg_a;
+
+            return FromRGBA(r, g, b, a);
+        }
+
+
+        [[maybe_unused]]
+        [[nodiscard]]
+        inline auto Add(
+                uint32_t foreground,
+                uint32_t background) -> uint32_t {
+            const auto[fg_r, fg_g, fg_b, fg_a] = ToRGBA(foreground);
+            const auto[bg_r, bg_g, bg_b, bg_a] = ToRGBA(background);
+
+            const auto r = std::clamp(fg_r + bg_r, 0, 0xFF);
+            const auto g = std::clamp(fg_g + bg_g, 0, 0xFF);
+            const auto b = std::clamp(fg_b + bg_b, 0, 0xFF);
+            const auto a = bg_a;
 
             return FromRGBA(r, g, b, a);
         }
@@ -554,6 +588,21 @@ namespace cherry {
 
 
     namespace drawing {
+        template<color::BlendType BlendFn = color::Overwrite>
+        [[maybe_unused]]
+        inline auto Fill(
+                Canvas & canvas,
+                uint32_t color) -> decltype(canvas) {
+            for (auto y = 0; y < canvas.Height; y += 1) {
+                for (auto x = 0; x < canvas.Width; x += 1) {
+                    canvas.BlendPixel<BlendFn>(x, y, color);
+                }
+            }
+
+            return canvas;
+        }
+
+
         template<color::BlendType BlendFn>
         inline auto LineLow(
                 Canvas & canvas,
@@ -749,7 +798,7 @@ namespace cherry {
 
 
         [[maybe_unused]]
-        inline auto BlurKernel2D(int size) -> Kernel2D {
+        inline auto BoxBlurKernel2D(int size) -> Kernel2D {
             if (size < 0) {
                 size = 0;
             }
@@ -761,7 +810,37 @@ namespace cherry {
 
 
         [[maybe_unused]]
-        inline auto BlurKernel1D(int size) -> Kernel1D {
+        inline auto GaussKernel2D(
+                int size,
+                float variance = 0) -> Kernel2D {
+            if (size < 0) {
+                size = 0;
+            }
+
+            size += (not(size % 2));
+
+            if (0.0f == variance) {
+                variance = (static_cast<float >(size) - 1.0f) / 4.0f;
+            }
+
+            auto data = std::vector<float>(size * size, 1.0f);
+            const auto origin = size / 2;
+            constexpr auto Pi = 3.14159265358979323846f;
+            const auto M = 1.0f / (2.0f * variance * variance);
+
+            for (auto y = -size / 2; y <= size / 2; y += 1) {
+                for (auto x = -size / 2; x <= size / 2; x += 1) {
+                    data[(origin + y) * size + origin + x] = M / Pi * std::exp(-M * static_cast<float>(x * x + y * y));
+                    data[(origin + y) * size + origin + x] *= static_cast<float>(size * size);
+                }
+            }
+
+            return { size, data };
+        }
+
+
+        [[maybe_unused]]
+        inline auto BoxBlurKernel1D(int size) -> Kernel1D {
             if (size < 0) {
                 size = 0;
             }
@@ -770,6 +849,16 @@ namespace cherry {
 
             return { size, std::vector<float>(size, 1.0f) };
         }
+
+
+#if 0
+        [[maybe_unused]]
+        inline auto Conv2D(
+                const Canvas & src,
+                const Kernel2D & kernel) -> uint32_t {
+            return 0;
+        }
+#endif
 
 
         [[maybe_unused]]
@@ -786,8 +875,8 @@ namespace cherry {
 
                     auto kernel_index = -1;
                     auto processed_pixels = 0.0f;
-                    for (auto v = y - kernel.Size / 2; v <= y + kernel.Size / 2 - (not (kernel.Size % 2)); v += 1) {
-                        for (auto u = x - kernel.Size / 2; u <= x + kernel.Size / 2 - (not (kernel.Size % 2)); u += 1) {
+                    for (auto v = y - kernel.Size / 2; v <= y + kernel.Size / 2 - (not(kernel.Size % 2)); v += 1) {
+                        for (auto u = x - kernel.Size / 2; u <= x + kernel.Size / 2 - (not(kernel.Size % 2)); u += 1) {
                             kernel_index += 1;
 
                             if (not src.IsWithinBounds(u, v)) {
@@ -939,6 +1028,81 @@ namespace cherry {
                     );
                 }
             }
+
+            return dst;
+        }
+
+
+        [[maybe_unused]]
+        inline auto MaxChannel(uint32_t pixel) -> float {
+            const auto[r, g, b, a] = color::ToRGBA<float>(pixel);
+            return std::max({ r * a / 255.0f, g * a / 255.0f, b * a / 255.0f }) / 255.0f;
+        }
+
+
+        using BrightnessFunction = decltype(MaxChannel);
+
+
+        template<BrightnessFunction Brightness>
+        [[maybe_unused]]
+        inline auto Grayscale(
+                const Canvas & src,
+                Canvas & dst) -> decltype(dst) {
+            for (auto y = 0; y < src.Height; y += 1) {
+                for (auto x = 0; x < src.Width; x += 1) {
+                    const auto pixel = src.Pixel(x, y);
+                    const auto brightness = static_cast<uint32_t>(255.0f * Brightness(pixel));
+                    const auto alpha = (pixel >> color::SHIFT_ALPHA) & 0xFF;
+
+                    dst.BlendPixel(
+                            x, y,
+                            color::FromRGBA(
+                                    brightness,
+                                    brightness,
+                                    brightness,
+                                    alpha
+                            )
+                    );
+                }
+            }
+
+
+            return dst;
+        }
+
+
+        template<BrightnessFunction Brightness>
+        inline auto FilterByBrightness(
+                const Canvas & src,
+                Canvas & dst,
+                float brightness_threshold,
+                uint32_t fill_dark = color::FromRGBA(0, 0, 0, 0)) -> decltype(dst) {
+            for (auto y = 0; y < src.Height; y += 1) {
+                for (auto x = 0; x < src.Width; x += 1) {
+                    const auto pixel = src.Pixel(x, y);
+                    const auto brightness = Brightness(pixel);
+
+                    dst.BlendPixel(x, y, brightness < brightness_threshold ? fill_dark : pixel);
+                }
+            }
+
+            return dst;
+        }
+
+
+        template<BrightnessFunction Brightness>
+        inline auto Bloom(
+                const Canvas & src,
+                Canvas & buffer1,
+                Canvas & buffer2,
+                Canvas & dst,
+                const Kernel2D & kernel,
+                float brightness_threshold) -> decltype(dst) {
+            FilterByBrightness<Brightness>(src, buffer1, brightness_threshold, color::FromRGBA(0, 0, 0, 255));
+            Conv2D(buffer1, buffer2, kernel);
+
+            transform::Copy<color::Overwrite>(src, dst);
+            transform::Copy<color::Add>(buffer2, dst);
 
             return dst;
         }
