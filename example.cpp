@@ -198,7 +198,7 @@ auto TreeBenchmark(std::chrono::seconds benchmark_duration) -> void {
 
         render_time_ms += Elapsed<std::chrono::milliseconds>(render_begin);
 
-        texture.update(canvas.DataUint8);
+        texture.update(canvas.DataUint8());
 
         window.draw(sprite);
 
@@ -239,12 +239,6 @@ auto ConvDemo() -> void {
             { static_cast<unsigned int>(width * 2), static_cast<unsigned int>(height) }, "Bloom"
     );
 
-    auto buffer1_data = cherry::utility::PixelBuffer(width, height);
-    auto buffer1 = cherry::Canvas(buffer1_data.data(), width, height);
-
-    auto buffer2_data = cherry::utility::PixelBuffer(width, height);
-    auto buffer2 = cherry::Canvas(buffer2_data.data(), width, height);
-
     auto bloom_data = cherry::utility::PixelBuffer(width, height);
     auto bloom_image = cherry::Canvas(bloom_data.data(), width, height);
 
@@ -255,20 +249,23 @@ auto ConvDemo() -> void {
 
     const auto render_begin = std::chrono::steady_clock::now();
 
-//    cherry::postprocessing::FilterByBrightness(input, buffer1, 0.75f, cherry::color::FromRGBA(0, 0, 0, 255));
-//    cherry::postprocessing::Conv2D(buffer1, buffer2, cherry::postprocessing::GaussKernel2D(32));
-//    cherry::drawing::Fill(canvas, 0x0);
+    //    auto buffer = cherry::PixelBufferPool::Default().BorrowCanvas(width, height);
+//
+//    cherry::postprocessing::FilterByBrightness<cherry::postprocessing::MaxChannel>(
+//            input, buffer.Canvas, 0.85f, cherry::color::FromRGBA(0, 0, 0, 255)
+//    );
+//    cherry::postprocessing::GaussianBlur(buffer.Canvas, bloom_image, kernel);
+//    cherry::drawing::Fill(canvas, cherry::color::FromRGBA(0, 0, 0, 255));
 //    cherry::transform::Copy<cherry::color::Overwrite>(input, canvas, width);
-//    cherry::transform::Copy<cherry::color::Add>(buffer2, canvas, width);
+//    cherry::transform::Copy<cherry::color::Add>(bloom_image, canvas, width);
 
     cherry::postprocessing::Bloom<cherry::postprocessing::MaxChannel>(
             input,
-            buffer1,
-            buffer2,
             bloom_image,
-            cherry::postprocessing::GaussKernel2D(24),
-            0.85f
+            cherry::math::GaussianKernel1D(32),
+            0.9f
     );
+
     cherry::transform::Copy<cherry::color::Overwrite>(bloom_image, canvas, width);
     cherry::transform::Copy<cherry::color::Overwrite>(input, canvas);
 
@@ -279,7 +276,7 @@ auto ConvDemo() -> void {
 
     auto texture = sf::Texture();
     texture.create(canvas.Width, canvas.Height);
-    texture.update(canvas.DataUint8);
+    texture.update(canvas.DataUint8());
     texture.copyToImage().saveToFile("../result.bmp");
 
     auto sprite = sf::Sprite();
@@ -293,7 +290,7 @@ auto ConvDemo() -> void {
             }
         }
 
-        texture.update(canvas.DataUint8);
+        texture.update(canvas.DataUint8());
 
         window.draw(sprite);
         window.display();

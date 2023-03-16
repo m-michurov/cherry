@@ -11,6 +11,7 @@
 #include <utility>
 #include <type_traits>
 #include <vector>
+#include <map>
 
 
 namespace cherry {
@@ -66,53 +67,6 @@ namespace cherry {
             if (y1 < y0) {
                 std::swap(y0, y1);
             }
-        }
-
-
-        class Fixed final {
-            static constexpr auto DIGITS = 8;
-
-            int repr;
-        public:
-            [[maybe_unused]]
-            explicit constexpr Fixed(float value) :
-                    repr(static_cast<int>(value * (1 << DIGITS))) {}
-
-
-            [[maybe_unused]]
-            explicit constexpr Fixed(double value) :
-                    repr(static_cast<int>(value * (1 << DIGITS))) {}
-
-
-            [[nodiscard]]
-            inline auto operator*(int value) const -> int {
-                return (value * repr) >> DIGITS;
-            }
-
-
-            friend auto operator/(
-                    int a,
-                    Fixed b) -> int;
-
-            friend auto operator*(
-                    int a,
-                    Fixed b) -> int;
-        };
-
-
-        [[nodiscard]]
-        inline auto operator/(
-                int a,
-                Fixed b) -> int {
-            return (a << Fixed::DIGITS) / b.repr;
-        }
-
-
-        [[nodiscard]]
-        inline auto operator*(
-                int a,
-                Fixed b) -> int {
-            return (a * b.repr) >> Fixed::DIGITS;
         }
     }
 
@@ -251,13 +205,24 @@ namespace cherry {
 
 
     class Canvas final {
+        uint32_t * const pixels{ nullptr };
+
     public:
-        uint32_t * const Data{ nullptr };
-        uint8_t * const DataUint8{ nullptr };
         const int Width{ 0u };
         const int Height{ 0u };
         const int Stride{ 0u };
-        const bool Empty{ false };
+
+
+        [[nodiscard]]
+        inline auto DataUint8() const -> uint8_t const * {
+            return reinterpret_cast<uint8_t *>(pixels);
+        }
+
+
+        [[nodiscard]]
+        inline auto Empty() const -> bool {
+            return not Width or not Height;
+        }
 
 
         Canvas(
@@ -266,12 +231,10 @@ namespace cherry {
                 int height,
                 int stride)
                 :
-                Data(data),
-                DataUint8(reinterpret_cast<uint8_t *>(data)),
+                pixels(data),
                 Width(width),
                 Height(height),
-                Stride(stride),
-                Empty(not width or not height) {
+                Stride(stride) {
 #ifdef CHERRY_CHECK_BOUNDS
             if (width < 0) {
                 throw std::out_of_range("Invalid width: " + std::to_string(width));
@@ -302,7 +265,7 @@ namespace cherry {
                 uint32_t color) -> Canvas & {
             CheckBounds(x, y);
 
-            Data[Stride * y + x] = BlendFn(color, Data[Stride * y + x]);
+            pixels[Stride * y + x] = BlendFn(color, pixels[Stride * y + x]);
 
             return *this;
         }
@@ -314,7 +277,7 @@ namespace cherry {
                 int y) const -> uint32_t {
             CheckBounds(x, y);
 
-            return Data[Stride * y + x];
+            return pixels[Stride * y + x];
         }
 
 
@@ -358,10 +321,107 @@ namespace cherry {
     };
 
 
-    namespace transform {
-        using FixedPoint = utility::Fixed;
+    class PixelBufferPool final {
+        std::vector<std::pair<int, std::unique_ptr<uint32_t[]>>> free;
+        std::map<uint32_t *, int> used;
 
 
+        inline auto ReturnBuffer(uint32_t * buffer) -> void {
+            const auto size = used[buffer];
+            used.erase(buffer);
+
+            free.emplace_back(size, std::unique_ptr<uint32_t[]>(buffer));
+        }
+
+
+        inline auto BorrowBuffer(int requested_size) -> uint32_t * {
+            auto it = free.begin();
+
+            for (; it != free.end(); it++) {
+                const auto buffer_size = it->first;
+
+                if (buffer_size >= requested_size) {
+                    break;
+                }
+            }
+
+            if (it != free.end()) {
+                const auto buffer_size = it->first;
+                const auto buffer = it->second.get();
+
+                it->second.release();
+                free.erase(it);
+                used[buffer] = buffer_size;
+
+                return buffer;
+            }
+
+            const auto buffer = new uint32_t[requested_size];
+            used[buffer] = requested_size;
+
+            return buffer;
+        }
+
+
+        struct BufferDeleter {
+            PixelBufferPool & pool;
+
+
+            inline auto operator()(uint32_t * buffer) -> void {
+                pool.ReturnBuffer(buffer);
+            }
+        };
+
+
+    public:
+        inline auto BorrowBuffer(
+                int width,
+                int height) -> std::unique_ptr<uint32_t[], BufferDeleter> {
+            return std::unique_ptr<uint32_t[], BufferDeleter>(
+                    BorrowBuffer(width * height),
+                    BufferDeleter{ *this }
+            );
+        }
+
+
+        class CanvasWrapper {
+            std::unique_ptr<uint32_t[], BufferDeleter> Buffer;
+
+        public:
+            Canvas Canvas;
+
+
+            CanvasWrapper(
+                    decltype(Buffer) buffer,
+                    int width,
+                    int height)
+                    :
+                    Buffer(std::move(buffer)),
+                    Canvas(Buffer.get(), width, height) {}
+
+
+            CanvasWrapper(const CanvasWrapper &) = delete;
+
+            auto operator=(const CanvasWrapper &) = delete;
+        };
+
+
+        inline auto BorrowCanvas(
+                int width,
+                int height) -> CanvasWrapper {
+            auto buffer = BorrowBuffer(width, height);
+            return { std::move(buffer), width, height };
+        }
+
+
+        static inline auto Default() -> PixelBufferPool & {
+            static auto default_instance = PixelBufferPool();
+            return default_instance;
+        }
+    };
+
+
+    namespace math {
         [[nodiscard]]
         constexpr inline auto ApplyRotation(
                 int x,
@@ -375,6 +435,198 @@ namespace cherry {
         }
 
 
+        [[nodiscard]]
+        constexpr inline auto Gaussian(
+                float x,
+                float standard_deviation) -> float {
+            constexpr auto double_pi_sqrt = 2.50662827463f;
+
+            const auto exp_denominator = -2.0f * standard_deviation * standard_deviation;
+            const auto denominator = double_pi_sqrt * standard_deviation;
+
+            return std::exp(x * x / exp_denominator) / denominator;
+        }
+
+
+        struct Kernel1D {
+            const int Size;
+            const std::vector<float> Values;
+        };
+
+
+        [[maybe_unused]]
+        inline auto GaussianKernel1D(
+                int size,
+                float standard_deviation = 0) -> Kernel1D {
+            if (size < 0) {
+                size = 0;
+            }
+
+            size += (not(size % 2));
+
+            if (0.0f == standard_deviation) {
+                standard_deviation = (static_cast<float >(size) - 1.0f) / 2.0f;
+            }
+
+            auto values = std::vector<float>(size, 1.0f);
+            const auto origin = size / 2;
+
+            for (auto x = -size / 2; x <= size / 2; x += 1) {
+                values[origin + x] = Gaussian(static_cast<float>(x), standard_deviation);
+            }
+
+            return { size, values };
+        }
+
+
+        [[maybe_unused]]
+        inline auto BoxBlurKernel1D(int size) -> Kernel1D {
+            if (size < 0) {
+                size = 0;
+            }
+
+            size += (not(size % 2));
+
+            return { size, std::vector<float>(size, 1.0f / static_cast<float>(size)) };
+        }
+
+
+        template<int N>
+        struct Float {
+            float Values[N]{ 0.0f };
+
+
+            Float(const Float<N> &) = default;
+
+            auto operator=(const Float<N> &) -> Float<N> & = default;
+
+
+            inline auto operator*=(float x) -> Float<N> & {
+                for (auto i = 0; i < N; i += 1) {
+                    Values[i] *= x;
+                }
+
+                return *this;
+            }
+
+
+            inline auto operator/=(float x) -> Float<N> & {
+                return (*this *= (1.0f / x));
+            }
+
+
+            inline auto operator+=(const Float<N> & other) -> Float<N> & {
+                for (auto i = 0; i < N; i += 1) {
+                    Values[i] += other.Values[i];
+                }
+
+                return *this;
+            }
+        };
+
+
+        inline auto UnpackPixel(
+                uint32_t pixel,
+                Float<3> & rgb,
+                float & a) -> void {
+            auto&[r, g, b] = rgb.Values;
+            r = static_cast<float>((pixel >> color::SHIFT_RED) & 0xFF);
+            g = static_cast<float>((pixel >> color::SHIFT_GREEN) & 0xFF);
+            b = static_cast<float>((pixel >> color::SHIFT_BLUE) & 0xFF);
+            a = static_cast<float>((pixel >> color::SHIFT_ALPHA) & 0xFF);
+        }
+
+
+        inline auto PackPixel(
+                const Float<3> & rgb,
+                float a) -> uint32_t {
+            return color::FromRGBA(
+                    std::clamp<int>(static_cast<int>(rgb.Values[color::INDEX_RED]), 0, 255),
+                    std::clamp<int>(static_cast<int>(rgb.Values[color::INDEX_GREEN]), 0, 255),
+                    std::clamp<int>(static_cast<int>(rgb.Values[color::INDEX_BLUE]), 0, 255),
+                    std::clamp<int>(static_cast<int>(a), 0, 255)
+            );
+        }
+
+
+        [[maybe_unused]]
+        inline auto Conv1DHorizontal(
+                const Canvas & src,
+                Canvas & dst,
+                const Kernel1D & kernel) -> decltype(dst) {
+            auto rgb0 = Float<3>{};
+            auto a0 = 0.0f;
+
+            for (auto y = 0; y < dst.Height; y += 1) {
+                for (auto x = 0; x < dst.Width; x += 1) {
+                    const auto u0 = x - kernel.Size / 2;
+                    const auto v = y;
+
+                    auto rgb = Float<3>{};
+                    auto a = 0.0f;
+
+                    for (auto i = 0; i < kernel.Size; i += 1) {
+                        const auto u = u0 + i;
+                        if (not src.IsWithinBounds(u, v)) {
+                            continue;
+                        }
+
+                        UnpackPixel(src.Pixel(u, v), rgb0, a0);
+                        rgb0 *= a0 / 255.0f * kernel.Values[i];
+                        rgb += rgb0;
+
+                        a += a0 * kernel.Values[i];
+                    }
+
+                    rgb *= 255.0f / a;
+                    dst.BlendPixel<color::Overwrite>(x, y, PackPixel(rgb, a));
+                }
+            }
+
+            return dst;
+        }
+
+
+        [[maybe_unused]]
+        inline auto Conv1DVertical(
+                const Canvas & src,
+                Canvas & dst,
+                const Kernel1D & kernel) -> decltype(dst) {
+            auto rgb0 = Float<3>{};
+            auto a0 = 0.0f;
+
+            for (auto y = 0; y < dst.Height; y += 1) {
+                for (auto x = 0; x < dst.Width; x += 1) {
+                    const auto v0 = y - kernel.Size / 2;
+                    const auto u = x;
+
+                    auto rgb = Float<3>{};
+                    auto a = 0.0f;
+
+                    for (auto i = 0; i < kernel.Size; i += 1) {
+                        const auto v = v0 + i;
+                        if (not src.IsWithinBounds(u, v)) {
+                            continue;
+                        }
+
+                        UnpackPixel(src.Pixel(u, v), rgb0, a0);
+                        rgb0 *= a0 / 255.0f * kernel.Values[i];
+                        rgb += rgb0;
+
+                        a += a0 * kernel.Values[i];
+                    }
+
+                    rgb *= 255.0f / a;
+                    dst.BlendPixel<color::Overwrite>(x, y, PackPixel(rgb, a));
+                }
+            }
+
+            return dst;
+        }
+    }
+
+
+    namespace transform {
         template<color::BlendType BlendFn>
         [[maybe_unused]]
         inline auto Copy(
@@ -384,7 +636,7 @@ namespace cherry {
                 int y0,
                 int x1,
                 int y1) -> decltype(dst) {
-            if (src.Empty) {
+            if (src.Empty()) {
                 return dst;
             }
 
@@ -440,10 +692,10 @@ namespace cherry {
             const auto src_right = src_left + src.Width;
             const auto src_bottom = src_top + src.Height;
 
-            const auto[ax, ay] = ApplyRotation(src_left, src_top, sin, cos);
-            const auto[bx, by] = ApplyRotation(src_right, src_top, sin, cos);
-            const auto[cx, cy] = ApplyRotation(src_right, src_bottom, sin, cos);
-            const auto[dx, dy] = ApplyRotation(src_left, src_bottom, sin, cos);
+            const auto[ax, ay] = math::ApplyRotation(src_left, src_top, sin, cos);
+            const auto[bx, by] = math::ApplyRotation(src_right, src_top, sin, cos);
+            const auto[cx, cy] = math::ApplyRotation(src_right, src_bottom, sin, cos);
+            const auto[dx, dy] = math::ApplyRotation(src_left, src_bottom, sin, cos);
 
             auto[min_x, max_x] = std::minmax({ ax, bx, cx, dx });
             min_x += x0;
@@ -463,7 +715,7 @@ namespace cherry {
 
             for (auto y = start_y; y < end_y; y += 1) {
                 for (auto x = start_x; x < end_x; x += 1) {
-                    auto[u, v] = ApplyRotation(x - x0, y - y0, -sin, cos);
+                    auto[u, v] = math::ApplyRotation(x - x0, y - y0, -sin, cos);
                     u += u0;
                     v += v0;
 
@@ -485,20 +737,20 @@ namespace cherry {
                 int u0,
                 int v0,
                 float rotation,
-                FixedPoint scale_x,
-                FixedPoint scale_y) -> decltype(dst) {
+                float scale_x,
+                float scale_y) -> decltype(dst) {
             const auto sin = std::sin(rotation);
             const auto cos = std::cos(rotation);
 
-            const auto src_left = -u0 * scale_x;
-            const auto src_top = -v0 * scale_y;
-            const auto src_right = src_left + src.Width * scale_x;
-            const auto src_bottom = src_top + src.Height * scale_y;
+            const auto src_left = static_cast<int>(static_cast<float >(-u0) * scale_x);
+            const auto src_top = static_cast<int>(static_cast<float >(-v0) * scale_y);
+            const auto src_right = src_left + static_cast<int>(static_cast<float >(src.Width) * scale_x);
+            const auto src_bottom = src_top + static_cast<int>(static_cast<float >(src.Height) * scale_y);
 
-            const auto[ax, ay] = ApplyRotation(src_left, src_top, sin, cos);
-            const auto[bx, by] = ApplyRotation(src_right, src_top, sin, cos);
-            const auto[cx, cy] = ApplyRotation(src_right, src_bottom, sin, cos);
-            const auto[dx, dy] = ApplyRotation(src_left, src_bottom, sin, cos);
+            const auto[ax, ay] = math::ApplyRotation(src_left, src_top, sin, cos);
+            const auto[bx, by] = math::ApplyRotation(src_right, src_top, sin, cos);
+            const auto[cx, cy] = math::ApplyRotation(src_right, src_bottom, sin, cos);
+            const auto[dx, dy] = math::ApplyRotation(src_left, src_bottom, sin, cos);
 
             auto[min_x, max_x] = std::minmax({ ax, bx, cx, dx });
             min_x += x0;
@@ -518,10 +770,10 @@ namespace cherry {
 
             for (auto y = start_y; y < end_y; y += 1) {
                 for (auto x = start_x; x < end_x; x += 1) {
-                    auto[u, v] = ApplyRotation(x - x0, y - y0, -sin, cos);
+                    auto[u, v] = math::ApplyRotation(x - x0, y - y0, -sin, cos);
 
-                    u = u0 + u / scale_x;
-                    v = v0 + v / scale_y;
+                    u = u0 + static_cast<int>(static_cast<float>(u) / scale_x);
+                    v = v0 + static_cast<int>(static_cast<float>(v) / scale_y);
 
                     dst.BlendPixel<BlendFn>(x, y, src.IsWithinBounds(u, v) ? src.Pixel(u, v) : transparent);
                 }
@@ -551,16 +803,13 @@ namespace cherry {
                 int y0 = 0,
                 const Transform & tf = {}) -> decltype(dst) {
             if (0.0f == tf.RotationRadians) {
-                const auto scale_x = FixedPoint{ tf.ScaleX };
-                const auto scale_y = FixedPoint{ tf.ScaleY };
-
                 return Copy<BlendFn>(
                         src,
                         dst,
-                        x0 - tf.OriginX * scale_x,
-                        y0 - tf.OriginY * scale_y,
-                        x0 + (src.Width - tf.OriginX) * scale_x,
-                        y0 + (src.Height - tf.OriginY) * scale_y
+                        x0 - static_cast<int>(static_cast<float >(tf.OriginX) * tf.ScaleX),
+                        y0 - static_cast<int>(static_cast<float >(tf.OriginY) * tf.ScaleY),
+                        x0 + static_cast<int>(static_cast<float >(src.Width - tf.OriginX) * tf.ScaleX),
+                        y0 + static_cast<int>(static_cast<float >(src.Height - tf.OriginY) * tf.ScaleY)
                 );
             }
 
@@ -580,8 +829,8 @@ namespace cherry {
                     x0, y0,
                     tf.OriginX, tf.OriginY,
                     tf.RotationRadians,
-                    FixedPoint{ tf.ScaleX },
-                    FixedPoint{ tf.ScaleY }
+                    tf.ScaleX,
+                    tf.ScaleY
             );
         }
     }
@@ -786,69 +1035,6 @@ namespace cherry {
 
 
     namespace postprocessing {
-        struct Kernel2D {
-            const int Size;
-            const std::vector<float> Data;
-        };
-
-        struct Kernel1D {
-            const int Size;
-            const std::vector<float> Data;
-        };
-
-
-        [[maybe_unused]]
-        inline auto BoxBlurKernel2D(int size) -> Kernel2D {
-            if (size < 0) {
-                size = 0;
-            }
-
-            size += (not(size % 2));
-
-            return { size, std::vector<float>(size * size, 1.0f) };
-        }
-
-
-        [[maybe_unused]]
-        inline auto GaussKernel2D(
-                int size,
-                float variance = 0) -> Kernel2D {
-            if (size < 0) {
-                size = 0;
-            }
-
-            size += (not(size % 2));
-
-            if (0.0f == variance) {
-                variance = (static_cast<float >(size) - 1.0f) / 4.0f;
-            }
-
-            auto data = std::vector<float>(size * size, 1.0f);
-            const auto origin = size / 2;
-            constexpr auto Pi = 3.14159265358979323846f;
-            const auto M = 1.0f / (2.0f * variance * variance);
-
-            for (auto y = -size / 2; y <= size / 2; y += 1) {
-                for (auto x = -size / 2; x <= size / 2; x += 1) {
-                    data[(origin + y) * size + origin + x] = M / Pi * std::exp(-M * static_cast<float>(x * x + y * y));
-                    data[(origin + y) * size + origin + x] *= static_cast<float>(size * size);
-                }
-            }
-
-            return { size, data };
-        }
-
-
-        [[maybe_unused]]
-        inline auto BoxBlurKernel1D(int size) -> Kernel1D {
-            if (size < 0) {
-                size = 0;
-            }
-
-            size += (not(size % 2));
-
-            return { size, std::vector<float>(size, 1.0f) };
-        }
 
 
 #if 0
@@ -862,181 +1048,28 @@ namespace cherry {
 
 
         [[maybe_unused]]
-        inline auto Conv2D(
+        inline auto GaussianBlur(
                 const Canvas & src,
                 Canvas & dst,
-                const Kernel2D & kernel) -> decltype(dst) {
-            for (auto y = 0; y < dst.Height; y += 1) {
-                for (auto x = 0; x < dst.Width; x += 1) {
-                    auto r = 0.0f;
-                    auto g = 0.0f;
-                    auto b = 0.0f;
-                    auto a = 0.0f;
+                const math::Kernel1D & kernel) -> decltype(dst) {
+            auto intermediate = PixelBufferPool::Default().BorrowCanvas(src.Width, src.Height);
 
-                    auto kernel_index = -1;
-                    auto processed_pixels = 0.0f;
-                    for (auto v = y - kernel.Size / 2; v <= y + kernel.Size / 2 - (not(kernel.Size % 2)); v += 1) {
-                        for (auto u = x - kernel.Size / 2; u <= x + kernel.Size / 2 - (not(kernel.Size % 2)); u += 1) {
-                            kernel_index += 1;
-
-                            if (not src.IsWithinBounds(u, v)) {
-                                continue;
-                            }
-
-                            processed_pixels += 1;
-
-                            const auto pixel = src.Pixel(u, v);
-                            const auto[r0, g0, b0, a0] = color::ToRGBA<float>(pixel);
-                            r += r0 * kernel.Data[kernel_index] * a0 / 255.0f;
-                            g += g0 * kernel.Data[kernel_index] * a0 / 255.0f;
-                            b += b0 * kernel.Data[kernel_index] * a0 / 255.0f;
-                            a += a0 * kernel.Data[kernel_index];
-                        }
-                    }
-
-                    r /= processed_pixels;
-                    g /= processed_pixels;
-                    b /= processed_pixels;
-                    a /= processed_pixels;
-
-                    r *= 255.0f / a;
-                    g *= 255.0f / a;
-                    b *= 255.0f / a;
-
-                    dst.BlendPixel<color::Overwrite>(
-                            x, y,
-                            color::FromRGBA(
-                                    std::clamp<int>(static_cast<int>(r), 0, std::numeric_limits<uint8_t>::max()),
-                                    std::clamp<int>(static_cast<int>(g), 0, std::numeric_limits<uint8_t>::max()),
-                                    std::clamp<int>(static_cast<int>(b), 0, std::numeric_limits<uint8_t>::max()),
-                                    std::clamp<int>(static_cast<int>(a), 0, std::numeric_limits<uint8_t>::max())
-                            )
-                    );
-                }
-            }
-
-            return dst;
-        }
-
-
-        [[maybe_unused]]
-        inline auto Conv1DHorizontal(
-                const Canvas & src,
-                Canvas & dst,
-                const Kernel1D & kernel) -> decltype(dst) {
-            for (auto y = 0; y < dst.Height; y += 1) {
-                for (auto x = 0; x < dst.Width; x += 1) {
-                    auto r = 0.0f;
-                    auto g = 0.0f;
-                    auto b = 0.0f;
-                    auto a = 0.0f;
-
-                    auto kernel_index = -1;
-                    auto processed_pixels = 0.0f;
-                    const auto v = y;
-                    for (auto u = x - kernel.Size / 2; u <= x + kernel.Size / 2; u += 1) {
-                        kernel_index += 1;
-
-                        if (not src.IsWithinBounds(u, v)) {
-                            continue;
-                        }
-
-                        processed_pixels += 1;
-
-                        const auto pixel = src.Pixel(u, v);
-                        const auto[r0, g0, b0, a0] = color::ToRGBA<float>(pixel);
-                        r += r0 * kernel.Data[kernel_index] * a0 / 255.0f;
-                        g += g0 * kernel.Data[kernel_index] * a0 / 255.0f;
-                        b += b0 * kernel.Data[kernel_index] * a0 / 255.0f;
-                        a += a0 * kernel.Data[kernel_index];
-                    }
-
-                    r /= processed_pixels;
-                    g /= processed_pixels;
-                    b /= processed_pixels;
-                    a /= processed_pixels;
-
-                    r *= 255.0f / a;
-                    g *= 255.0f / a;
-                    b *= 255.0f / a;
-
-                    dst.BlendPixel<color::Overwrite>(
-                            x, y,
-                            color::FromRGBA(
-                                    std::clamp<int>(static_cast<int>(r), 0, std::numeric_limits<uint8_t>::max()),
-                                    std::clamp<int>(static_cast<int>(g), 0, std::numeric_limits<uint8_t>::max()),
-                                    std::clamp<int>(static_cast<int>(b), 0, std::numeric_limits<uint8_t>::max()),
-                                    std::clamp<int>(static_cast<int>(a), 0, std::numeric_limits<uint8_t>::max())
-                            )
-                    );
-                }
-            }
-
-            return dst;
-        }
-
-
-        [[maybe_unused]]
-        inline auto Conv1DVertical(
-                const Canvas & src,
-                Canvas & dst,
-                const Kernel1D & kernel) -> decltype(dst) {
-            for (auto y = 0; y < dst.Height; y += 1) {
-                for (auto x = 0; x < dst.Width; x += 1) {
-                    auto r = 0.0f;
-                    auto g = 0.0f;
-                    auto b = 0.0f;
-                    auto a = 0.0f;
-
-                    auto kernel_index = -1;
-                    auto processed_pixels = 0.0f;
-                    const auto u = x;
-                    for (auto v = y - kernel.Size / 2; v <= y + kernel.Size / 2; v += 1) {
-                        kernel_index += 1;
-
-                        if (not src.IsWithinBounds(u, v)) {
-                            continue;
-                        }
-
-                        processed_pixels += 1;
-
-                        const auto pixel = src.Pixel(u, v);
-                        const auto[r0, g0, b0, a0] = color::ToRGBA<float>(pixel);
-                        r += r0 * kernel.Data[kernel_index] * a0 / 255.0f;
-                        g += g0 * kernel.Data[kernel_index] * a0 / 255.0f;
-                        b += b0 * kernel.Data[kernel_index] * a0 / 255.0f;
-                        a += a0 * kernel.Data[kernel_index];
-                    }
-
-                    r /= processed_pixels;
-                    g /= processed_pixels;
-                    b /= processed_pixels;
-                    a /= processed_pixels;
-
-                    r *= 255.0f / a;
-                    g *= 255.0f / a;
-                    b *= 255.0f / a;
-
-                    dst.BlendPixel<color::Overwrite>(
-                            x, y,
-                            color::FromRGBA(
-                                    std::clamp<int>(static_cast<int>(r), 0, std::numeric_limits<uint8_t>::max()),
-                                    std::clamp<int>(static_cast<int>(g), 0, std::numeric_limits<uint8_t>::max()),
-                                    std::clamp<int>(static_cast<int>(b), 0, std::numeric_limits<uint8_t>::max()),
-                                    std::clamp<int>(static_cast<int>(a), 0, std::numeric_limits<uint8_t>::max())
-                            )
-                    );
-                }
-            }
-
-            return dst;
+            Conv1DHorizontal(src, intermediate.Canvas, kernel);
+            return math::Conv1DVertical(intermediate.Canvas, dst, kernel);
         }
 
 
         [[maybe_unused]]
         inline auto MaxChannel(uint32_t pixel) -> float {
             const auto[r, g, b, a] = color::ToRGBA<float>(pixel);
-            return std::max({ r * a / 255.0f, g * a / 255.0f, b * a / 255.0f }) / 255.0f;
+            return std::max({ r, g, b }) * a / 255.0f / 255.0f;
+        }
+
+
+        [[maybe_unused]]
+        inline auto Luminance(uint32_t pixel) -> float {
+            const auto[r, g, b, a] = color::ToRGBA<float>(pixel);
+            return std::sqrt(0.299f * r * r + 0.587f * g * g + 0.114f * b * b) * a / 255.0f / 255.0f;
         }
 
 
@@ -1093,16 +1126,17 @@ namespace cherry {
         template<BrightnessFunction Brightness>
         inline auto Bloom(
                 const Canvas & src,
-                Canvas & buffer1,
-                Canvas & buffer2,
                 Canvas & dst,
-                const Kernel2D & kernel,
+                const math::Kernel1D & blur_kernel,
                 float brightness_threshold) -> decltype(dst) {
-            FilterByBrightness<Brightness>(src, buffer1, brightness_threshold, color::FromRGBA(0, 0, 0, 255));
-            Conv2D(buffer1, buffer2, kernel);
+            auto buffer1 = PixelBufferPool::Default().BorrowCanvas(src.Width, src.Height);
+            auto buffer2 = PixelBufferPool::Default().BorrowCanvas(src.Width, src.Height);
+
+            FilterByBrightness<Brightness>(src, buffer1.Canvas, brightness_threshold, color::FromRGBA(0, 0, 0, 255));
+            GaussianBlur(buffer1.Canvas, buffer2.Canvas, blur_kernel);
 
             transform::Copy<color::Overwrite>(src, dst);
-            transform::Copy<color::Add>(buffer2, dst);
+            transform::Copy<color::Add>(buffer2.Canvas, dst);
 
             return dst;
         }
